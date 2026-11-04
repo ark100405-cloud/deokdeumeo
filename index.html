@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>덕드머</title>
+<meta name="description" content="우리끼리 매기는 국힙 앨범 평점">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Black+Han+Sans&family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@500;700&display=swap">
+<style>
+:root{
+  --paper:#ECEDE8; --card:#F7F7F3; --ink:#151515; --mute:#62645E; --line:#CFD0C8;
+  --gold:#C89200; --red:#B8352A;
+  --display:"Black Han Sans","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --body:"IBM Plex Sans KR","Apple SD Gothic Neo","Malgun Gothic",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --paper:#121311; --card:#1B1C19; --ink:#ECECE6; --mute:#9A9C94; --line:#30322D;
+  --gold:#F0B92A; --red:#E0584B; color-scheme:dark}}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{margin:0;background:var(--paper);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55}
+.wrap{max-width:760px;margin:0 auto;padding-block:28px 64px;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+header{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;
+  border-bottom:4px solid var(--ink);padding-bottom:10px}
+h1{font-family:var(--display);font-weight:400;font-size:clamp(48px,13vw,84px);line-height:.9;margin:0;letter-spacing:-1px}
+.tag{font-size:13px;color:var(--mute)}
+.tag b{color:var(--ink);cursor:pointer;text-decoration:underline;text-decoration-color:var(--line)}
+.bar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;margin:18px 0 10px}
+.seg{display:flex;border:1.5px solid var(--ink)}
+.seg button{all:unset;cursor:pointer;padding:6px 12px;font-size:13px;font-weight:700}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--paper)}
+.btn{all:unset;cursor:pointer;background:var(--ink);color:var(--paper);font-weight:700;font-size:14px;padding:9px 16px;text-align:center}
+.btn.ghost{background:transparent;color:var(--ink);border:1.5px solid var(--ink);padding:7.5px 14px}
+.btn.gold{background:var(--gold);color:#151515}
+.btn:focus-visible,.seg button:focus-visible,.star-hit:focus-visible,.row-head:focus-visible,.link:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+.btn[disabled]{opacity:.4;cursor:default}
+.panel{background:var(--card);border:1.5px solid var(--ink);padding:16px;display:grid;gap:12px;margin-bottom:14px}
+.panel h2{font-family:var(--display);font-weight:400;font-size:22px;margin:0}
+.panel ol{margin:0;padding-left:20px;display:grid;gap:6px;font-size:14px}
+.fields{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+@media (max-width:520px){.fields{grid-template-columns:1fr}}
+label{display:grid;gap:4px;font-size:12px;font-weight:700;color:var(--mute);letter-spacing:.03em}
+input{font:inherit;color:var(--ink);background:var(--paper);border:1.5px solid var(--line);padding:8px 10px;width:100%;min-width:0;border-radius:0}
+input:focus{outline:none;border-color:var(--ink)}
+.actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap;align-items:center}
+.list{display:grid}
+.row{border-bottom:1.5px solid var(--line)}
+.row-head{display:grid;grid-template-columns:76px 64px 1fr auto;gap:14px;align-items:center;padding:14px 4px;cursor:pointer}
+.cover{width:64px;aspect-ratio:1;max-width:100%;display:grid;place-items:center;overflow:hidden;font-family:var(--display);font-size:26px;color:#F4F4EE}
+.score{font-family:var(--mono);font-weight:700;font-size:34px;line-height:1;font-variant-numeric:tabular-nums}
+.score small{display:block;font-size:11px;font-weight:500;color:var(--mute);margin-top:4px;letter-spacing:.02em}
+.meta{min-width:0}
+.meta h3{margin:0;font-size:18px;font-weight:700;line-height:1.3;overflow-wrap:anywhere}
+.meta p{margin:2px 0 0;color:var(--mute);font-size:13px}
+.chev{font-family:var(--mono);color:var(--mute);font-size:18px}
+.stars{position:relative;display:inline-block;font-size:15px;letter-spacing:1px;line-height:1;color:var(--line);white-space:nowrap}
+.stars::before{content:"★★★★★"}
+.stars i{position:absolute;inset:0 auto 0 0;overflow:hidden;color:var(--gold);font-style:normal}
+.stars i::before{content:"★★★★★"}
+.detail{padding:4px 4px 18px 94px;display:grid;gap:14px}
+@media (max-width:520px){.detail{padding-left:4px}.row-head{grid-template-columns:52px 56px 1fr auto;gap:10px}.cover{width:56px}.score{font-size:26px}}
+.mine{background:var(--card);border:1.5px solid var(--ink);padding:14px;display:grid;gap:10px}
+.mine-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.picker{display:flex;font-size:32px;line-height:1;user-select:none}
+.pstar{position:relative;width:1em;height:1em;color:var(--line)}
+.pstar::before{content:"★";position:absolute;inset:0}
+.pstar .fill{position:absolute;inset:0 auto 0 0;overflow:hidden;color:var(--gold)}
+.pstar .fill::before{content:"★"}
+.star-hit{all:unset;position:absolute;top:0;bottom:0;width:50%;cursor:pointer;z-index:1}
+.star-hit.l{left:0}.star-hit.r{right:0}
+.pval{font-family:var(--mono);font-weight:700;font-size:20px;font-variant-numeric:tabular-nums;min-width:3ch}
+.reviews{display:grid;margin:0;padding:0;list-style:none}
+.reviews li{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;padding:10px 0;border-top:1px dashed var(--line)}
+.reviews .rv-score{font-family:var(--mono);font-weight:700;font-size:15px;font-variant-numeric:tabular-nums;grid-row:span 2}
+.reviews .who{font-size:12px;color:var(--mute)}
+.reviews .who b{color:var(--ink)}
+.reviews q{quotes:"\201C" "\201D";overflow-wrap:anywhere;min-width:0}
+.reviews .noline{color:var(--mute);font-style:italic}
+.small{font-size:12px;color:var(--mute)}
+.link{all:unset;cursor:pointer;color:var(--mute);font-size:12px;font-weight:700;text-decoration:underline}
+.empty{border:1.5px dashed var(--line);padding:32px 18px;text-align:center;color:var(--mute);display:grid;gap:10px;justify-items:center}
+.empty strong{font-family:var(--display);font-weight:400;font-size:24px;color:var(--ink)}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--paper);padding:10px 16px;font-size:14px;font-weight:700;z-index:20;max-width:calc(100% - 32px)}
+.notice{background:var(--card);border-left:4px solid var(--red);padding:10px 14px;font-size:14px;margin-top:14px}
+.pending{font-size:11px;color:var(--gold);font-weight:700;margin-left:4px}
+footer{margin-top:28px;display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap}
+@media (hover:hover){.row-head:hover .meta h3{text-decoration:underline;text-decoration-thickness:2px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>덕드머</h1>
+    <div class="tag">우리끼리 매기는 국힙 앨범 평점 · <b id="me-label" role="button" tabindex="0">닉네임 정하기</b></div>
+  </header>
+
+  <div id="notice" class="notice" hidden></div>
+
+  <section id="setup" class="panel" hidden>
+    <h2>사이트 연결이 아직 안 됐어</h2>
+    <p class="small" style="margin:0">이 화면은 사이트 주인한테만 의미 있어. <code>index.html</code> 위쪽 <code>CONFIG</code>에 구글 폼이랑 시트 링크 두 개를 넣으면 돼.</p>
+  </section>
+
+  <section id="nick-panel" class="panel" hidden>
+    <h2>닉네임부터 정해줘</h2>
+    <p class="small" style="margin:0">한줄평 옆에 이 이름이 보여. 같은 닉네임으로 다시 평가하면 예전 평가가 바뀌어.</p>
+    <form id="nick-form" class="actions" style="justify-content:flex-start">
+      <input id="nick-input" maxlength="12" placeholder="예: 3반 붐뱁장인" style="flex:1" autocomplete="nickname">
+      <button class="btn" type="submit">저장</button>
+    </form>
+  </section>
+
+  <div class="bar">
+    <div class="seg" role="group" aria-label="정렬">
+      <button type="button" data-sort="avg" aria-pressed="true">평점순</button>
+      <button type="button" data-sort="new" aria-pressed="false">최근 등록순</button>
+      <button type="button" data-sort="count" aria-pressed="false">리뷰 많은 순</button>
+    </div>
+    <button class="btn" id="add-toggle" type="button">+ 앨범 등록</button>
+  </div>
+
+  <form id="add-form" class="panel" hidden>
+    <h2>앨범 등록</h2>
+    <p class="small" style="margin:0">등록하면서 바로 첫 별점을 매겨줘. 이미 있는 앨범이면 거기에 평가가 더해져.</p>
+    <div class="fields">
+      <label>앨범명<input id="f-title" required maxlength="60" placeholder="앨범 제목" list="dl-titles" autocomplete="off"></label>
+      <label>아티스트<input id="f-artist" required maxlength="40" placeholder="아티스트" list="dl-artists" autocomplete="off"></label>
+    </div>
+    <div class="mine-top" id="add-picker"></div>
+    <input id="f-line" maxlength="60" placeholder="한줄평 (60자까지, 선택)">
+    <div class="actions">
+      <button class="btn ghost" type="button" id="add-cancel">취소</button>
+      <button class="btn" type="submit" id="add-submit" disabled>등록</button>
+    </div>
+  </form>
+  <datalist id="dl-titles"></datalist>
+  <datalist id="dl-artists"></datalist>
+
+  <div id="list" class="list">
+    <div class="empty" id="loading"><strong>앨범 불러오는 중</strong><span>잠깐만…</span></div>
+  </div>
+
+  <footer>
+    <span class="small" id="updated"></span>
+    <button class="link" type="button" id="refresh">새로고침</button>
+  </footer>
+</div>
+<div id="toast" class="toast" hidden role="status"></div>
+
+<script>
+/* ───────────── 설정: 여기 두 줄만 채우면 돼 ─────────────
+ * Apps Script 에서 getSiteLinks 함수를 실행하면 로그에 두 줄이 그대로 나와.
+ * prefillUrl : 폼의 미리 채워진 링크 (5칸 모두 채워진 것)
+ * csvUrl     : 응답 시트를 CSV로 읽는 주소 (시트가 "링크 있는 사람 보기"로 공유돼 있어야 함)
+ */
+const CONFIG = Object.assign({
+  prefillUrl: 'https://docs.google.com/forms/d/e/1FAIpQLSdcgUkSAoW4gzfa1Eq0GOUAC6-_YOQ0L2Xu6FTkCbNBtVzIgg/viewform?usp=pp_url&entry.1639683640=x&entry.1195263000=x&entry.1800362103=x&entry.1490180788=5.0&entry.1026122007=x',
+  csvUrl: 'https://docs.google.com/spreadsheets/d/1Xnfc5qVwulxEq8eTT2YD3IhnbpHJvWKhaWMPOj6aoUw/gviz/tq?tqx=out:csv&headers=1&sheet=%EC%84%A4%EB%AC%B8%EC%A7%80%20%EC%9D%91%EB%8B%B5%20%EC%8B%9C%ED%8A%B81'
+}, window.DDM_CONFIG || {});
+/* ──────────────────────────────────────────────────────── */
+
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const store = {
+  get(k, d){ try{ const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v) }catch(e){ return d } },
+  set(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)) }catch(e){} }
+};
+let toastT;
+function toast(m){ const t=$('#toast'); t.textContent=m; t.hidden=false; clearTimeout(toastT); toastT=setTimeout(()=>t.hidden=true,2600) }
+function notice(m){ const n=$('#notice'); n.textContent=m; n.hidden=!m }
+
+const S = {
+  entries: [],            // 시트에서 읽은 평가 (원본 순서)
+  pending: store.get('ddm-pending', []), // 내가 보냈지만 아직 시트에 안 보이는 평가
+  nick: store.get('ddm-nick', ''),
+  sort: store.get('ddm-sort', 'avg'),
+  open: null, draft: {}, addDraft: 0,
+  form: null, loadedAt: null
+};
+
+/* ── 폼 주소 해석 ── */
+function parseForm(url){
+  try{
+    const u = new URL(url);
+    const m = u.pathname.match(/\/forms\/d\/e\/([^/]+)\//);
+    const keys = [...u.searchParams.keys()].filter(k => /^entry\.\d+$/.test(k));
+    if(!m || keys.length < 5) return null;
+    const [nick, title, artist, score, line] = keys;
+    return { action: `https://docs.google.com/forms/d/e/${m[1]}/formResponse`, nick, title, artist, score, line };
+  }catch(e){ return null }
+}
+
+/* ── CSV ── */
+function parseCSV(t){
+  const rows=[]; let row=[], f='', q=false;
+  for(let i=0;i<t.length;i++){
+    const c=t[i];
+    if(q){ if(c==='"'){ if(t[i+1]==='"'){ f+='"'; i++ } else q=false } else f+=c }
+    else if(c==='"') q=true;
+    else if(c===','){ row.push(f); f='' }
+    else if(c==='\n'){ row.push(f); rows.push(row); row=[]; f='' }
+    else if(c!=='\r') f+=c;
+  }
+  if(f || row.length){ row.push(f); rows.push(row) }
+  return rows;
+}
+function toEntries(rows){
+  if(!rows.length) return [];
+  const h = rows[0].map(x => x.trim());
+  const col = name => h.findIndex(x => x.includes(name));
+  const ix = { nick: col('닉네임'), title: col('앨범'), artist: col('아티스트'), s: col('별점'), t: col('한줄평') };
+  if(ix.nick < 0 || ix.title < 0 || ix.artist < 0 || ix.s < 0) throw new Error('header');
+  const out = [];
+  rows.slice(1).forEach((r, i) => {
+    const e = { nick: (r[ix.nick]||'').trim(), title: (r[ix.title]||'').trim(), artist: (r[ix.artist]||'').trim(),
+      s: parseFloat(r[ix.s]), t: ix.t >= 0 ? (r[ix.t]||'').trim() : '', at: i };
+    if(e.nick && e.title && e.artist && e.s > 0) out.push(e);
+  });
+  return out;
+}
+
+/* ── 집계 ── */
+const norm = s => String(s||'').toLowerCase().replace(/\s+/g,'');
+const keyOf = e => norm(e.title) + '|' + norm(e.artist);
+const sameEntry = (a, b) => norm(a.nick)===norm(b.nick) && keyOf(a)===keyOf(b) && a.s===b.s && (a.t||'')===(b.t||'');
+
+function albums(){
+  // 시트에 이미 반영된 대기 평가는 정리
+  const before = S.pending.length;
+  S.pending = S.pending.filter(p => Date.now()-p.ts < 864e5 && !S.entries.some(e => sameEntry(e, p)));
+  if(S.pending.length !== before) store.set('ddm-pending', S.pending);
+
+  const all = S.entries.concat(S.pending.map((p, i) => ({...p, at: S.entries.length + i, pending: true})));
+  const map = new Map();
+  for(const e of all){
+    const k = keyOf(e);
+    if(!map.has(k)) map.set(k, { key: k, title: e.title, artist: e.artist, first: e.at, by: new Map() });
+    map.get(k).by.set(norm(e.nick), e); // 같은 닉네임은 마지막 평가만
+  }
+  return [...map.values()].map(a => {
+    const rs = [...a.by.values()].sort((x, y) => y.at - x.at);
+    const avg = rs.reduce((x, r) => x + r.s, 0) / rs.length;
+    return { ...a, rs, avg };
+  });
+}
+
+/* ── 렌더 ── */
+const HUES=[8,28,45,140,175,205,230,265,300,335];
+function coverHTML(a){
+  let h=0; for(const c of a.artist + a.title) h=(h*31+c.charCodeAt(0))>>>0;
+  return `<div class="cover" style="background:hsl(${HUES[h%HUES.length]} 45% 32%)" aria-hidden="true">${esc(a.artist.trim().charAt(0)||'?')}</div>`;
+}
+function starsHTML(v){ return `<span class="stars" aria-label="5점 만점에 ${v}점"><i style="width:${v/5*100}%"></i></span>` }
+function pickerHTML(v, scope){
+  return `<div class="picker" role="group" aria-label="별점">${[1,2,3,4,5].map(i => {
+    const f = Math.max(0, Math.min(1, v-(i-1)));
+    return `<span class="pstar"><span class="fill" style="width:${f*100}%"></span><button class="star-hit l" type="button" aria-label="${i-0.5}점" data-rate="${i-0.5}" data-scope="${esc(scope)}"></button><button class="star-hit r" type="button" aria-label="${i}점" data-rate="${i}" data-scope="${esc(scope)}"></button></span>`;
+  }).join('')}</div><span class="pval">${(v||0).toFixed(1)}</span>`;
+}
+
+function render(){
+  const list = $('#list');
+  const rows = albums();
+  $('#dl-titles').innerHTML = [...new Set(rows.map(a => a.title))].map(t => `<option value="${esc(t)}">`).join('');
+  $('#dl-artists').innerHTML = [...new Set(rows.map(a => a.artist))].map(t => `<option value="${esc(t)}">`).join('');
+  if(!rows.length){
+    list.innerHTML = `<div class="empty"><strong>아직 등록된 앨범이 없어</strong><span>첫 앨범을 등록하고 별점을 매겨봐. 친구들 평이 여기 쌓여.</span><button class="btn gold" type="button" data-open-add>+ 첫 앨범 등록</button></div>`;
+    return;
+  }
+  rows.sort((x, y) => {
+    if(S.sort==='new') return y.first - x.first;
+    if(S.sort==='count') return y.rs.length - x.rs.length || y.avg - x.avg;
+    return y.avg - x.avg || y.rs.length - x.rs.length;
+  });
+  list.innerHTML = rows.map(a => {
+    const open = S.open === a.key;
+    return `<div class="row">
+      <div class="row-head" role="button" tabindex="0" aria-expanded="${open}" data-toggle="${esc(a.key)}">
+        <div class="score">${a.avg.toFixed(1)}<small>${a.rs.length}명 평가</small></div>
+        ${coverHTML(a)}
+        <div class="meta"><h3>${esc(a.title)}</h3><p>${esc(a.artist)}</p>${starsHTML(Math.round(a.avg*2)/2)}</div>
+        <div class="chev">${open?'−':'+'}</div>
+      </div>
+      ${open ? detailHTML(a) : ''}
+    </div>`;
+  }).join('');
+}
+function detailHTML(a){
+  const mine = S.nick ? a.by.get(norm(S.nick)) : null;
+  const d = S.draft[a.key];
+  const v = d ? d.s : (mine ? mine.s : 0);
+  const t = d ? d.t : (mine ? mine.t : '');
+  return `<div class="detail">
+    <div class="mine">
+      <div class="mine-top">${pickerHTML(v, a.key)}</div>
+      <input maxlength="60" placeholder="한줄평 (60자까지)" value="${esc(t)}" data-line="${esc(a.key)}" aria-label="한줄평">
+      <div class="actions" style="justify-content:space-between">
+        <span class="small">${mine ? '다시 저장하면 내 평가가 바뀌어' : '별을 반 칸 단위로 누를 수 있어'}</span>
+        <button class="btn" type="button" data-save="${esc(a.key)}" ${v ? '' : 'disabled'}>저장</button>
+      </div>
+    </div>
+    <ul class="reviews">${a.rs.map(r => `<li><span class="rv-score">${r.s.toFixed(1)}</span><span class="who"><b>${esc(r.nick)}</b>${S.nick && norm(r.nick)===norm(S.nick) ? ' (나)' : ''} ${starsHTML(r.s)}${r.pending ? '<span class="pending">반영 중</span>' : ''}</span>${r.t ? `<q>${esc(r.t)}</q>` : '<span class="noline">한줄평 없음</span>'}</li>`).join('')}</ul>
+  </div>`;
+}
+function renderAddPicker(){ $('#add-picker').innerHTML = pickerHTML(S.addDraft, '__add'); $('#add-submit').disabled = !S.addDraft }
+function syncSort(){ document.querySelectorAll('[data-sort]').forEach(b => b.setAttribute('aria-pressed', b.dataset.sort === S.sort)) }
+function syncNick(){ $('#me-label').textContent = S.nick || '닉네임 정하기' }
+
+/* ── 불러오기 ── */
+async function load(quiet){
+  if(!CONFIG.csvUrl) return;
+  try{
+    const u = CONFIG.csvUrl + (CONFIG.csvUrl.includes('?') ? '&' : '?') + '_=' + Date.now();
+    const res = await fetch(u, { cache: 'no-store' });
+    if(!res.ok) throw new Error(res.status);
+    S.entries = toEntries(parseCSV(await res.text()));
+    S.loadedAt = new Date();
+    $('#updated').textContent = '마지막 업데이트 ' + S.loadedAt.toLocaleTimeString('ko-KR', {hour:'2-digit', minute:'2-digit'});
+    notice('');
+    render();
+  }catch(e){
+    if(!quiet || !S.loadedAt) notice(e.message === 'header'
+      ? '시트 형식이 달라. 웹에 게시할 때 "응답" 시트를 골랐는지 확인해줘.'
+      : '평점을 못 불러왔어. 잠시 후 새로고침 해줘.');
+    if(!S.loadedAt) $('#list').innerHTML = '';
+  }
+}
+
+/* ── 보내기 ── */
+async function submit(e){
+  if(!S.form){ toast('아직 폼이 연결 안 됐어'); return false }
+  if(!S.nick){ askNick(); return false }
+  const body = new URLSearchParams();
+  body.append(S.form.nick, S.nick);
+  body.append(S.form.title, e.title);
+  body.append(S.form.artist, e.artist);
+  body.append(S.form.score, e.s.toFixed(1));
+  body.append(S.form.line, e.t);
+  try{
+    await fetch(S.form.action, { method: 'POST', mode: 'no-cors', body });
+  }catch(err){ toast('보내기 실패: 인터넷 연결을 확인해줘'); return false }
+  S.pending.push({ nick: S.nick, title: e.title, artist: e.artist, s: e.s, t: e.t, ts: Date.now() });
+  store.set('ddm-pending', S.pending);
+  return true;
+}
+function askNick(){ toast('닉네임부터 정해줘'); $('#nick-panel').hidden = false; $('#nick-input').value = S.nick; $('#nick-input').focus() }
+
+/* ── 이벤트 ── */
+document.addEventListener('click', async ev => {
+  const el = ev.target.closest('[data-toggle],[data-rate],[data-save],[data-sort],[data-open-add]');
+  if(!el) return;
+  if(el.dataset.sort){ S.sort = el.dataset.sort; store.set('ddm-sort', S.sort); syncSort(); render(); return }
+  if('openAdd' in el.dataset){ openAdd(); return }
+  if(el.dataset.toggle){ const k = el.dataset.toggle; S.open = S.open === k ? null : k; render(); return }
+  if(el.dataset.rate){
+    const v = +el.dataset.rate, scope = el.dataset.scope;
+    if(scope === '__add'){ S.addDraft = v; renderAddPicker(); return }
+    const inp = document.querySelector(`[data-line="${CSS.escape(scope)}"]`);
+    S.draft[scope] = { s: v, t: inp ? inp.value : '' }; render(); return;
+  }
+  if(el.dataset.save){
+    const k = el.dataset.save, a = albums().find(x => x.key === k); if(!a) return;
+    const mine = S.nick ? a.by.get(norm(S.nick)) : null;
+    const inp = document.querySelector(`[data-line="${CSS.escape(k)}"]`);
+    const s = S.draft[k] ? S.draft[k].s : (mine ? mine.s : 0);
+    if(!s) return;
+    el.disabled = true;
+    if(await submit({ title: a.title, artist: a.artist, s, t: (inp ? inp.value : '').trim().slice(0, 60) })){
+      delete S.draft[k]; toast('저장했어. 친구들 화면엔 몇 분 뒤에 보여'); render();
+    }else el.disabled = false;
+  }
+});
+document.addEventListener('input', ev => {
+  const k = ev.target.dataset && ev.target.dataset.line; if(!k) return;
+  const a = albums().find(x => x.key === k); const mine = a && S.nick ? a.by.get(norm(S.nick)) : null;
+  S.draft[k] = { s: S.draft[k] ? S.draft[k].s : (mine ? mine.s : 0), t: ev.target.value };
+});
+document.addEventListener('keydown', ev => {
+  const h = ev.target.closest && ev.target.closest('[data-toggle],#me-label');
+  if(h && (ev.key === 'Enter' || ev.key === ' ')){ ev.preventDefault(); h.click() }
+});
+
+function openAdd(){ $('#add-form').hidden = false; renderAddPicker(); $('#f-title').focus() }
+$('#add-toggle').onclick = () => { if($('#add-form').hidden) openAdd(); else $('#add-form').hidden = true };
+$('#add-cancel').onclick = () => { $('#add-form').hidden = true };
+$('#add-form').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  const title = $('#f-title').value.trim(), artist = $('#f-artist').value.trim();
+  if(!title || !artist || !S.addDraft) return;
+  const btn = $('#add-submit'); btn.disabled = true;
+  const ok = await submit({ title, artist, s: S.addDraft, t: $('#f-line').value.trim().slice(0, 60) });
+  if(ok){
+    ev.target.reset(); ev.target.hidden = true; S.addDraft = 0;
+    S.open = norm(title) + '|' + norm(artist);
+    toast('등록했어. 친구들 화면엔 몇 분 뒤에 보여'); render();
+  }
+  btn.disabled = !S.addDraft;
+});
+
+$('#nick-form').addEventListener('submit', ev => {
+  ev.preventDefault(); const v = $('#nick-input').value.trim(); if(!v) return;
+  S.nick = v; store.set('ddm-nick', v); syncNick(); $('#nick-panel').hidden = true; toast('닉네임 저장'); render();
+});
+$('#me-label').addEventListener('click', () => { $('#nick-panel').hidden = !$('#nick-panel').hidden; $('#nick-input').value = S.nick; if(!$('#nick-panel').hidden) $('#nick-input').focus() });
+$('#refresh').onclick = () => { toast('불러오는 중…'); load() };
+
+/* ── 시작 ── */
+syncSort(); syncNick();
+S.form = parseForm(CONFIG.prefillUrl);
+if(!CONFIG.csvUrl || !S.form){
+  $('#setup').hidden = false;
+  $('#list').innerHTML = '';
+}else{
+  if(!S.nick) $('#nick-panel').hidden = false;
+  load();
+  setInterval(() => { if(!document.hidden) load(true) }, 60000);
+  document.addEventListener('visibilitychange', () => { if(!document.hidden) load(true) });
+}
+</script>
+</body>
+</html>
