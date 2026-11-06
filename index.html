@@ -131,7 +131,7 @@ footer{margin-top:28px;display:flex;justify-content:space-between;gap:8px;flex-w
       <label>아티스트<input id="f-artist" required maxlength="40" placeholder="아티스트" list="dl-artists" autocomplete="off"></label>
     </div>
     <div class="mine-top" id="add-picker"></div>
-    <input id="f-line" maxlength="60" placeholder="한줄평 (60자까지, 선택)">
+    <input id="f-line" maxlength="200" placeholder="한줄평 (200자까지, 선택)">
     <div class="actions">
       <button class="btn ghost" type="button" id="add-cancel">취소</button>
       <button class="btn" type="submit" id="add-submit" disabled>등록</button>
@@ -297,7 +297,7 @@ function detailHTML(a){
   return `<div class="detail">
     <div class="mine">
       <div class="mine-top">${pickerHTML(v, a.key)}</div>
-      <input maxlength="60" placeholder="한줄평 (60자까지)" value="${esc(t)}" data-line="${esc(a.key)}" aria-label="한줄평">
+      <input maxlength="200" placeholder="한줄평 (200자까지)" value="${esc(t)}" data-line="${esc(a.key)}" aria-label="한줄평">
       <div class="actions" style="justify-content:space-between">
         <span class="small">${mine ? '다시 저장하면 내 평가가 바뀌어' : '별을 반 칸 단위로 누를 수 있어'}</span>
         <button class="btn" type="button" data-save="${esc(a.key)}" ${v ? '' : 'disabled'}>저장</button>
@@ -369,7 +369,7 @@ document.addEventListener('click', async ev => {
     const s = S.draft[k] ? S.draft[k].s : (mine ? mine.s : 0);
     if(!s) return;
     el.disabled = true;
-    if(await submit({ title: a.title, artist: a.artist, s, t: (inp ? inp.value : '').trim().slice(0, 60) })){
+    if(await submit({ title: a.title, artist: a.artist, s, t: (inp ? inp.value : '').trim().slice(0, 200) })){
       delete S.draft[k]; toast('저장했어. 친구들 화면엔 몇 분 뒤에 보여'); render();
     }else el.disabled = false;
   }
@@ -392,7 +392,7 @@ $('#add-form').addEventListener('submit', async ev => {
   const title = $('#f-title').value.trim(), artist = $('#f-artist').value.trim();
   if(!title || !artist || !S.addDraft) return;
   const btn = $('#add-submit'); btn.disabled = true;
-  const ok = await submit({ title, artist, s: S.addDraft, t: $('#f-line').value.trim().slice(0, 60) });
+  const ok = await submit({ title, artist, s: S.addDraft, t: $('#f-line').value.trim().slice(0, 200) });
   if(ok){
     ev.target.reset(); ev.target.hidden = true; S.addDraft = 0;
     S.open = norm(title) + '|' + norm(artist);
