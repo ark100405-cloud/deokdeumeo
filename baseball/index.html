@@ -3942,7 +3942,8 @@ body {
     const c = ensure();
     if (c && c.state === 'suspended') c.resume().catch(() => {});
   }
-  function ready() { return ac && ac.state === 'running' && !muted; }
+  let forced = false;                                    // 시험용 오프라인 렌더링
+  function ready() { return ac && (forced || ac.state === 'running') && !muted; }
 
   /** 필터를 거친 잡음 한 덩어리 */
   function noise({ dur, type = 'bandpass', f0, f1, q = 1, gain = 0.4, attack = 0.003, delay = 0 }) {
@@ -3963,6 +3964,70 @@ body {
     src.connect(flt); flt.connect(g); g.connect(master);
     src.start(t, Math.random());
     src.stop(t + dur + 0.05);
+  }
+  // ── 관중 목소리 ───────────────────────────────────────────
+  // 모음 포먼트(공명 주파수): 성대에서 나온 소리를 이 대역들로 빚으면 "아·오·에"처럼 들린다
+  const VOWELS = {
+    a: [[800, 6, 1], [1200, 8, 0.6], [2600, 10, 0.18]],
+    o: [[480, 6, 1], [820, 8, 0.55], [2500, 10, 0.12]],
+    e: [[560, 6, 1], [1800, 9, 0.45], [2600, 10, 0.15]],
+  };
+  /** 여러 사람이 함께 지르는 소리: 음높이가 다른 목소리(톱니파) 여럿 + 비브라토 → 모음 필터 → 높은 소리는 깎는다 */
+  function crowd({ vowel = 'a', dur = 2, power = 1, rise = 1.08, fall = 0.95, peakAt = 0.3, low = false, delay = 0 }) {
+    if (!ready()) return;
+    const t = ac.currentTime + delay;
+    const out = ac.createGain();
+    out.gain.setValueAtTime(0.0001, t);
+    out.gain.linearRampToValueAtTime(0.42 * power, t + Math.max(0.12, dur * peakAt));
+    out.gain.linearRampToValueAtTime(0.3 * power, t + dur * 0.65);
+    out.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const lp = ac.createBiquadFilter();                   // 지글거리는 고음을 깎는다
+    lp.type = 'lowpass';
+    lp.frequency.value = 3200;
+    lp.Q.value = 0.5;
+    const bus = ac.createGain();
+    bus.gain.value = 1;
+    for (const [f, q, g] of VOWELS[vowel] || VOWELS.a) {
+      const bp = ac.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = f * (0.96 + Math.random() * 0.08);
+      bp.Q.value = q;
+      const bg = ac.createGain();
+      bg.gain.value = g * 2.2;
+      bus.connect(bp); bp.connect(bg); bg.connect(lp);
+    }
+    lp.connect(out); out.connect(master);
+    // 목소리: 남자(110~180Hz)·여자·아이(200~340Hz) 섞어서
+    const n = Math.round(9 + power * 9);
+    for (let i = 0; i < n; i++) {
+      const o = ac.createOscillator();
+      o.type = 'sawtooth';
+      const base = (low ? 95 : 115) + Math.random() * (low ? 120 : 230);
+      const st = t + Math.random() * 0.18;                // 사람마다 조금씩 늦게 시작
+      o.frequency.setValueAtTime(base, st);
+      o.frequency.linearRampToValueAtTime(base * rise, st + dur * peakAt);
+      o.frequency.linearRampToValueAtTime(base * fall, t + dur);
+      o.detune.value = (Math.random() - 0.5) * 30;
+      const vib = ac.createOscillator();                  // 떨림(비브라토)
+      vib.frequency.value = 4.5 + Math.random() * 3;
+      const vg = ac.createGain();
+      vg.gain.value = base * 0.025;
+      vib.connect(vg); vg.connect(o.frequency);
+      const g = ac.createGain();
+      g.gain.value = (0.5 + Math.random() * 0.5) / n;
+      o.connect(g); g.connect(bus);
+      o.start(st); vib.start(st);
+      o.stop(t + dur + 0.05); vib.stop(t + dur + 0.05);
+    }
+    // 숨소리 섞기(아주 조금, 낮은 대역만): 목소리끼리만 있으면 기계음 같아서
+    const src = ac.createBufferSource();
+    src.buffer = noiseBuf; src.loop = true;
+    const nf = ac.createBiquadFilter();
+    nf.type = 'lowpass'; nf.frequency.value = 1400;
+    const ng = ac.createGain();
+    ng.gain.value = 0.06;
+    src.connect(nf); nf.connect(ng); ng.connect(bus);
+    src.start(t, Math.random()); src.stop(t + dur + 0.05);
   }
   /** 음높이가 미끄러지는 짧은 음 */
   function tone({ f0, f1, dur, type = 'sine', gain = 0.3, attack = 0.002, delay = 0 }) {
@@ -4029,80 +4094,26 @@ body {
       noise({ dur: 0.12, type: 'lowpass', f0: 700, gain: 0.3 });
       tone({ f0: 160, f1: 90, dur: 0.12, gain: 0.3 });
     },
-    /** 관중 함성: 천천히 부풀었다 잦아드는 잡음 */
+    /** 관중 함성 "와아아~": 여러 사람 목소리(음높이가 다른 소리 여럿)를 "아" 모음으로 빚는다. 잡음(지글지글)은 쓰지 않는다 */
     cheer(power = 1) {
-      if (!ready()) return;
-      const t = ac.currentTime;
-      const dur = 1.6 + power * 1.4;
-      const src = ac.createBufferSource();
-      src.buffer = noiseBuf;
-      src.loop = true;
-      const bp = ac.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.frequency.setValueAtTime(700, t);
-      bp.frequency.linearRampToValueAtTime(1300, t + dur * 0.4);
-      bp.frequency.linearRampToValueAtTime(900, t + dur);
-      bp.Q.value = 0.55;
-      const g = ac.createGain();
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.3 * power, t + 0.35);
-      g.gain.linearRampToValueAtTime(0.22 * power, t + dur * 0.6);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-      // 함성의 일렁임
-      const lfo = ac.createOscillator();
-      lfo.frequency.value = 5.5;
-      const lg = ac.createGain();
-      lg.gain.value = 0.05 * power;
-      lfo.connect(lg); lg.connect(g.gain);
-      src.connect(bp); bp.connect(g); g.connect(master);
-      src.start(t, Math.random());
-      src.stop(t + dur + 0.1);
-      lfo.start(t);
-      lfo.stop(t + dur + 0.1);
+      crowd({ vowel: 'a', dur: 1.5 + power * 1.6, power, rise: 1.06 + power * 0.08, fall: 0.95 });
     },
-    /** 관중 "오~": 큰 타구가 담장 앞에서 잡혔을 때(올라갔다 꺼지는 함성) */
+    /** 관중 "오~": 큰 타구가 담장 앞에서 잡혔을 때. 올라갔다가 꺼진다 */
     ooh() {
-      if (!ready()) return;
-      const t = ac.currentTime;
-      const src = ac.createBufferSource();
-      src.buffer = noiseBuf; src.loop = true;
-      const bp = ac.createBiquadFilter();
-      bp.type = 'bandpass'; bp.Q.value = 2.2;
-      bp.frequency.setValueAtTime(520, t);
-      bp.frequency.linearRampToValueAtTime(900, t + 0.5);
-      bp.frequency.linearRampToValueAtTime(380, t + 1.5);
-      const g = ac.createGain();
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.32, t + 0.4);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
-      src.connect(bp); bp.connect(g); g.connect(master);
-      src.start(t, Math.random()); src.stop(t + 1.7);
+      crowd({ vowel: 'o', dur: 1.7, power: 0.75, rise: 1.18, fall: 0.8, peakAt: 0.35 });
     },
-    /** 관중 아쉬움 "아~": 낮게 깔리며 내려가는 소리(삼진·병살 등) */
+    /** 관중 아쉬움 "아~": 낮게 내려가는 소리(병살 등) */
     groan(power = 0.6) {
-      if (!ready()) return;
-      const t = ac.currentTime;
-      const src = ac.createBufferSource();
-      src.buffer = noiseBuf; src.loop = true;
-      const bp = ac.createBiquadFilter();
-      bp.type = 'bandpass'; bp.Q.value = 1.6;
-      bp.frequency.setValueAtTime(700, t);
-      bp.frequency.exponentialRampToValueAtTime(260, t + 1.1);
-      const g = ac.createGain();
-      g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(0.22 * power, t + 0.15);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
-      src.connect(bp); bp.connect(g); g.connect(master);
-      src.start(t, Math.random()); src.stop(t + 1.3);
+      crowd({ vowel: 'a', dur: 1.3, power: power * 0.8, rise: 1, fall: 0.72, peakAt: 0.12, low: true });
     },
-    /** 박수: 짧은 잡음 여러 개를 엇박으로 */
+    /** 박수 대신: 짧은 환호를 한 번 더 얹는다(잡음 박수는 지글거려서 쓰지 않는다) */
     clap(power = 0.5) {
-      const n = Math.round(10 + power * 30);
-      for (let i = 0; i < n; i++) noise({ dur: 0.025, f0: 1100 + Math.random() * 1500, q: 1.3, gain: 0.05 + Math.random() * 0.05 * (0.5 + power), delay: 0.15 + Math.random() * (0.8 + power * 1.4) });
+      crowd({ vowel: 'e', dur: 0.9 + power, power: power * 0.6, rise: 1.1, fall: 0.97, delay: 0.25 });
     },
+    /** 축포 "펑": 낮게 울리는 폭발음(지글거리는 고음 없이) */
     firework() {
-      noise({ dur: 0.35, type: 'highpass', f0: 1800, gain: 0.16, attack: 0.005 });
-      tone({ f0: 110, f1: 45, dur: 0.3, gain: 0.3 });
+      noise({ dur: 0.45, type: 'lowpass', f0: 900, f1: 180, gain: 0.3, attack: 0.004 });
+      tone({ f0: 120, f1: 40, dur: 0.4, gain: 0.34 });
     },
     click() { tone({ f0: 620, f1: 880, dur: 0.06, type: 'triangle', gain: 0.16 }); },
     /** 투수가 공을 놓는 순간의 가벼운 바람 소리 */
@@ -4119,6 +4130,17 @@ body {
     },
   };
 
+  /** 시험용: 주어진 (Offline)AudioContext 로 소리 하나를 그린다 */
+  Sfx.renderInto = function renderInto(ctx, fn) {
+    const keep = [ac, master, noiseBuf, muted];
+    ac = ctx; muted = false; forced = true;
+    master = ctx.createGain(); master.gain.value = 0.85; master.connect(ctx.destination);
+    const len = Math.floor(ctx.sampleRate * 1.5);
+    noiseBuf = ctx.createBuffer(1, len, ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    try { fn(Sfx); } finally { [ac, master, noiseBuf, muted] = keep; forced = false; }
+  };
   BB.Sfx = Sfx;
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
