@@ -950,6 +950,9 @@ body {
       <button class="tool" id="soundBtn" type="button" aria-pressed="true" aria-label="소리 끄기">
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 9.5h3.2L12 5.6v12.8L7.2 14.5H4z" fill="currentColor"/><path class="tool__wave" d="M15.2 9.2a4 4 0 0 1 0 5.6M17.8 6.8a7.4 7.4 0 0 1 0 10.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path class="tool__mute" d="M15.5 9.5l5 5m0-5l-5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
       </button>
+      <button class="tool" id="vibeBtn" type="button" aria-pressed="true" aria-label="진동 끄기" hidden>
+        <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><rect x="8" y="4" width="8" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path class="tool__wave" d="M4.5 9v6M19.5 9v6M2 10.5v3M22 10.5v3" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path class="tool__mute" d="M3 3l18 18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
       <button class="tool" id="homeBtn" type="button" aria-label="처음 화면으로" hidden>
         <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4.5 11.2L12 4.8l7.5 6.4M6.6 10v8.6h3.9v-4.9h3v4.9h3.9V10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
@@ -3985,26 +3988,41 @@ body {
       muted = !!m;
       if (master) master.gain.value = muted ? 0 : 0.85;
     },
-    /** 방망이에 맞는 소리. 정타일수록 낮고 묵직한 "딱!" */
+    /** 방망이에 맞는 소리. 정타일수록 낮고 묵직한 "딱!" · 매번 조금씩 다르게(나무 결·맞는 자리) */
     crack(grade) {
+      const k = 0.92 + Math.random() * 0.16;              // 음높이 흔들기
+      const v = Math.floor(Math.random() * 3);            // 소리 종류 세 가지
       if (grade === 'perfect') {
-        noise({ dur: 0.1, f0: 1700, q: 0.7, gain: 0.95 });
-        tone({ f0: 1150, f1: 420, dur: 0.075, type: 'triangle', gain: 0.55 });
-        tone({ f0: 200, f1: 85, dur: 0.14, gain: 0.6 });
+        noise({ dur: 0.1, f0: 1700 * k, q: 0.7, gain: 0.95 });
+        tone({ f0: 1150 * k, f1: 420 * k, dur: 0.075, type: 'triangle', gain: 0.55 });
+        tone({ f0: 200 * k, f1: 85, dur: 0.14, gain: 0.6 });
+        if (v === 1) tone({ f0: 2350 * k, f1: 1900 * k, dur: 0.09, type: 'sine', gain: 0.18 });            // 쨍한 울림
+        else if (v === 2) noise({ dur: 0.22, type: 'lowpass', f0: 420, gain: 0.25, delay: 0.02 });          // 묵직한 꼬리
+        else tone({ f0: 3100 * k, f1: 2600 * k, dur: 0.05, type: 'triangle', gain: 0.12 });
       } else if (grade === 'good') {
-        noise({ dur: 0.07, f0: 2200, q: 0.8, gain: 0.6 });
-        tone({ f0: 950, f1: 480, dur: 0.055, type: 'triangle', gain: 0.38 });
-        tone({ f0: 180, f1: 100, dur: 0.08, gain: 0.25 });
+        noise({ dur: 0.07, f0: 2200 * k, q: 0.8, gain: 0.6 });
+        tone({ f0: 950 * k, f1: 480 * k, dur: 0.055, type: 'triangle', gain: 0.38 });
+        tone({ f0: 180 * k, f1: 100, dur: 0.08, gain: 0.25 });
+        if (v === 1) noise({ dur: 0.05, f0: 3600 * k, q: 1.5, gain: 0.2, delay: 0.01 });
       } else {
-        noise({ dur: 0.04, f0: 3200, q: 1.2, gain: 0.34 });
-        tone({ f0: 720, f1: 600, dur: 0.035, type: 'square', gain: 0.1 });
+        // 빗맞음: 틱 / 퍽(먹힌 타구) / 탁(끝에 맞음)
+        if (v === 0) { noise({ dur: 0.04, f0: 3200 * k, q: 1.2, gain: 0.34 }); tone({ f0: 720 * k, f1: 600, dur: 0.035, type: 'square', gain: 0.1 }); }
+        else if (v === 1) { noise({ dur: 0.07, type: 'lowpass', f0: 650 * k, gain: 0.45 }); tone({ f0: 240 * k, f1: 140, dur: 0.06, gain: 0.22 }); }
+        else { noise({ dur: 0.05, f0: 2600 * k, q: 2.2, gain: 0.3 }); tone({ f0: 1400 * k, f1: 1250 * k, dur: 0.09, type: 'triangle', gain: 0.1 }); }
       }
     },
-    whoosh() { noise({ dur: 0.16, f0: 500, f1: 1900, q: 1.4, gain: 0.2, attack: 0.04 }); },
-    /** 공이 뒤 그물에 꽂히는 소리 */
-    thud() {
-      noise({ dur: 0.13, type: 'lowpass', f0: 520, gain: 0.5 });
-      tone({ f0: 130, f1: 70, dur: 0.11, gain: 0.4 });
+    /** 헛스윙·스윙 바람 소리: 세기와 결이 조금씩 다르다 */
+    whoosh() {
+      const k = 0.85 + Math.random() * 0.3;
+      noise({ dur: 0.14 + Math.random() * 0.06, f0: 500 * k, f1: 1900 * k, q: 1.1 + Math.random() * 0.6, gain: 0.17 + Math.random() * 0.07, attack: 0.04 });
+    },
+    /** 공이 포수 미트에 꽂히는 소리: 빠를수록 크고 높은 "펑!" */
+    thud(kmh) {
+      const f = kmh ? Math.min(1, Math.max(0, (kmh - 110) / 45)) : 0.5;
+      const k = 0.9 + Math.random() * 0.2;
+      noise({ dur: 0.11 + f * 0.04, type: 'lowpass', f0: (480 + f * 420) * k, gain: 0.42 + f * 0.25 });
+      tone({ f0: (120 + f * 60) * k, f1: 65, dur: 0.11, gain: 0.35 + f * 0.15 });
+      if (f > 0.6) noise({ dur: 0.03, f0: 2400 * k, q: 1.4, gain: 0.12 });                                     // 가죽 튀는 소리
     },
     land(far) { noise({ dur: 0.1, type: 'lowpass', f0: 380, gain: far ? 0.12 : 0.22 }); },
     wall() {
@@ -4042,6 +4060,46 @@ body {
       lfo.start(t);
       lfo.stop(t + dur + 0.1);
     },
+    /** 관중 "오~": 큰 타구가 담장 앞에서 잡혔을 때(올라갔다 꺼지는 함성) */
+    ooh() {
+      if (!ready()) return;
+      const t = ac.currentTime;
+      const src = ac.createBufferSource();
+      src.buffer = noiseBuf; src.loop = true;
+      const bp = ac.createBiquadFilter();
+      bp.type = 'bandpass'; bp.Q.value = 2.2;
+      bp.frequency.setValueAtTime(520, t);
+      bp.frequency.linearRampToValueAtTime(900, t + 0.5);
+      bp.frequency.linearRampToValueAtTime(380, t + 1.5);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.32, t + 0.4);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.6);
+      src.connect(bp); bp.connect(g); g.connect(master);
+      src.start(t, Math.random()); src.stop(t + 1.7);
+    },
+    /** 관중 아쉬움 "아~": 낮게 깔리며 내려가는 소리(삼진·병살 등) */
+    groan(power = 0.6) {
+      if (!ready()) return;
+      const t = ac.currentTime;
+      const src = ac.createBufferSource();
+      src.buffer = noiseBuf; src.loop = true;
+      const bp = ac.createBiquadFilter();
+      bp.type = 'bandpass'; bp.Q.value = 1.6;
+      bp.frequency.setValueAtTime(700, t);
+      bp.frequency.exponentialRampToValueAtTime(260, t + 1.1);
+      const g = ac.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(0.22 * power, t + 0.15);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 1.2);
+      src.connect(bp); bp.connect(g); g.connect(master);
+      src.start(t, Math.random()); src.stop(t + 1.3);
+    },
+    /** 박수: 짧은 잡음 여러 개를 엇박으로 */
+    clap(power = 0.5) {
+      const n = Math.round(10 + power * 30);
+      for (let i = 0; i < n; i++) noise({ dur: 0.025, f0: 1100 + Math.random() * 1500, q: 1.3, gain: 0.05 + Math.random() * 0.05 * (0.5 + power), delay: 0.15 + Math.random() * (0.8 + power * 1.4) });
+    },
     firework() {
       noise({ dur: 0.35, type: 'highpass', f0: 1800, gain: 0.16, attack: 0.005 });
       tone({ f0: 110, f1: 45, dur: 0.3, gain: 0.3 });
@@ -4062,6 +4120,55 @@ body {
   };
 
   BB.Sfx = Sfx;
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script>
+/* 진동: 내가 친 공이 방망이에 맞는 순간("딱!") 손에 느낌을 준다.
+ *  - 안드로이드 등: navigator.vibrate(정타일수록 길고 세게, 홈런은 축포처럼)
+ *  - 아이폰·아이패드 Safari 는 vibrate 가 없어서, iOS 18 부터 스위치형 체크박스(<input switch>)를
+ *    누를 때 나는 시스템 햅틱을 쓴다. 이건 터치하는 그 순간에만 되므로 스윙 터치에서 맞을 공이면 울린다.
+ *  - 도구 버튼(진동)으로 끌 수 있고, 설정은 기기에 기억한다.
+ */
+(function (global) {
+  'use strict';
+  const BB = global.BB;
+  const nav = global.navigator || {};
+  let on = true;
+  let sw = null;
+  const canVibrate = () => typeof nav.vibrate === 'function';
+  const isIOS = () => /iPad|iPhone|iPod/.test(nav.userAgent || '') || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1);
+  function iosSwitch() {
+    if (sw) return sw;
+    const label = document.createElement('label');
+    label.setAttribute('aria-hidden', 'true');
+    label.style.cssText = 'position:fixed;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.setAttribute('switch', '');
+    input.tabIndex = -1;
+    label.appendChild(input);
+    document.body.appendChild(label);
+    sw = label;
+    return sw;
+  }
+  function buzz(pattern) {
+    if (!on) return;
+    if (canVibrate()) { try { nav.vibrate(pattern); } catch (e) { /* 막힌 브라우저 */ } }
+  }
+  BB.Haptic = {
+    get on() { return on; },
+    set(v) { on = !!v; },
+    supported: () => canVibrate() || isIOS(),
+    /** 스윙 터치 순간(아이폰용): 맞을 공이면 톡 */
+    swing(willHit) {
+      if (!on || !willHit || canVibrate() || !isIOS()) return;
+      try { iosSwitch().click(); } catch (e) { /* 무시 */ }
+    },
+    /** 방망이에 맞는 순간: 정타일수록 세게 */
+    hit(grade) { buzz(grade === 'perfect' ? [55, 35, 30] : grade === 'good' ? 32 : 14); },
+    /** 홈런: 두근두근 축포 */
+    homerun() { buzz([80, 70, 80, 70, 160]); },
+  };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>
@@ -7702,6 +7809,7 @@ body {
     if (!store.best) store.best = {};
     Sfx.setMuted(!!store.muted);
     setSoundButton();
+    setVibeButton();
     refreshBest();
   });
 
@@ -7721,10 +7829,16 @@ body {
     if (S.camMode === 'plate') cam.setShot(shots.plate);
     bg.key = '';
   }
+  // 낮 경기/야간 경기: 게임·타석·연습을 시작할 때마다 반반으로 고른다(대결은 경기 번호로 두 화면이 같게)
+  let sceneName = Math.random() < 0.5 ? 'night' : 'day';
   function readScene() {
-    const v = getComputedStyle(document.documentElement).getPropertyValue('--scene').trim();
-    scene = BB.SCENES[v === 'night' ? 'night' : 'day'];
+    scene = BB.SCENES[sceneName === 'night' ? 'night' : 'day'];
     bg.key = '';
+  }
+  function pickScene(seed) {
+    const night = seed != null ? Math.abs(seed | 0) % 2 === 1 : Math.random() < 0.5;
+    sceneName = night ? 'night' : 'day';
+    readScene();
   }
 
   // ── HUD ────────────────────────────────────────────────
@@ -7767,11 +7881,31 @@ body {
     el.soundBtn.setAttribute('aria-pressed', String(on));
     el.soundBtn.setAttribute('aria-label', on ? '소리 끄기' : '소리 켜기');
   }
+  // 진동 버튼: 진동을 낼 수 있는 기기(휴대폰·태블릿)에서만 보인다
+  const vibeBtn = $('vibeBtn');
+  function setVibeButton() {
+    if (!vibeBtn || !BB.Haptic) return;
+    BB.Haptic.set(store.vibe !== 0);
+    vibeBtn.hidden = !BB.Haptic.supported();
+    const on = BB.Haptic.on;
+    vibeBtn.setAttribute('aria-pressed', String(on));
+    vibeBtn.setAttribute('aria-label', on ? '진동 끄기' : '진동 켜기');
+  }
+  if (vibeBtn) vibeBtn.addEventListener('click', (e) => {
+    if (!BB.Haptic) return;
+    store.vibe = BB.Haptic.on ? 0 : 1;
+    saveStore();
+    setVibeButton();
+    Sfx.click();
+    if (BB.Haptic.on) BB.Haptic.hit('good');
+    if (e.detail > 0) vibeBtn.blur();
+  });
 
   // ── 세션 진행 ─────────────────────────────────────────
   /** 세션을 시작한다. 세션 모양은 아래 quickSession 참고 */
   function runSession(session, now) {
     now = now == null ? global.performance.now() : now;
+    pickScene(session.sceneSeed);
     S.session = session;
     S.mode = 'play';
     S.thrown = 0;
@@ -7987,9 +8121,10 @@ body {
   }
 
   /** 스윙 시작. t0 는 보정이 끝난 실제 스윙 시각(ms) */
-  function swingAt(t0) {
+  function swingAt(t0, human) {
     const contact = BB.solveContact(S.pitch, (t0 - S.tRel) / 1000);
-    S.swing = { t0, contact, tContact: contact.hit ? S.tRel + contact.t * 1000 : null, resumeAt: null };
+    S.swing = { t0, contact, tContact: contact.hit ? S.tRel + contact.t * 1000 : null, resumeAt: null, human: !!human };
+    if (human && BB.Haptic) BB.Haptic.swing(contact.hit);   // 아이폰: 터치하는 순간에만 울릴 수 있다
     Sfx.whoosh();
     el.hint.hidden = true;
   }
@@ -8002,7 +8137,7 @@ body {
     if (S.swing) return;
     if (S.phase !== 'windup' && S.phase !== 'flight') return;
     if (S.phase === 'windup' && t - S.tWind < 250) return;   // 시작 버튼을 누른 손가락이 그대로 스윙이 되지 않게
-    swingAt(t - INPUT_LAG);
+    swingAt(t - INPUT_LAG, true);
   }
   const now = () => global.performance.now();
 
@@ -8061,6 +8196,7 @@ body {
     fx.impact(start, power, L.grade === 'perfect' ? '#ffd24a' : '#fff6d8');
     if (!reducedMotion.matches) S.shake = 4 + power * 9;
     Sfx.crack(L.grade);
+    if (sw.human && BB.Haptic) BB.Haptic.hit(L.grade);     // 내가 친 공만 진동
     const word = L.grade === 'perfect' ? '딱!' : L.grade === 'good' ? '탁!' : '틱';
     showCall(word, contactNote(L), L.grade === 'perfect' ? 'is-gold' : L.grade === 'weak' ? 'is-dim' : '');
     el.statEv.textContent = String(Math.round(L.ev));
@@ -8097,17 +8233,22 @@ body {
       S.flash = 1;
       Sfx.cheer(1);
       Sfx.fanfare();
+      Sfx.clap(1);
+      if (S.swing && S.swing.human && BB.Haptic) BB.Haptic.homerun();
       fx.launchFireworks(landPos, FIREWORK_COLORS);
       fx.impact([h.pos[0], h.pos[1], h.pos[2]], 0.6, '#ffd24a');
     } else if (code === 'FOUL') {
       cls = 'is-dim'; dur = 650;
     } else if (code === 'OUT') {
       cls = 'is-dim'; dur = 900;
-      if (play.method === 'dive' || play.method === 'jump') { cls = 'is-red'; Sfx.cheer(0.45); dur = 1200; }
+      if (play.method === 'dive' || play.method === 'jump') { cls = 'is-red'; Sfx.cheer(0.45); Sfx.clap(0.4); dur = 1200; }
+      else if (sim.carry >= 88) Sfx.ooh();                     // 담장 앞에서 잡힌 큰 타구: 관중 "오~"
+      else if (play.dp) Sfx.groan(0.7);
     } else {
       cls = code === '1B' || code === 'IF1B' ? '' : 'is-gold';
       dur = code === '1B' || code === 'IF1B' ? 1000 : 1300;
       Sfx.cheer(code === '1B' || code === 'IF1B' ? 0.3 : 0.55);
+      Sfx.clap(code === '1B' || code === 'IF1B' ? 0.25 : 0.55);
       if (!play.air) fx.mark(landPos, dist + 'm', code === '1B' || code === 'IF1B' ? '#fdfdf6' : '#ffd24a');
     }
     let sub = code === 'FOUL' ? '' : `${dist}m`;
@@ -8212,7 +8353,7 @@ body {
           const p = S.pitch.pos((now - S.tRel) / 1000);
           if (!S.called && p[2] < -1.0) callMiss();
           if (p[2] < -5.5) {
-            Sfx.thud();
+            Sfx.thud(S.pitch && S.pitch.kmh);
             S.phase = 'after';
             S.tAfter = now;
             S.afterDur = S.session.done() ? 1300 : 600;   // 마지막 공은 판정 문구를 다 보여 준 뒤 결과로
@@ -8600,6 +8741,7 @@ body {
     }
     Sfx.setMuted(!!store.muted);
     setSoundButton();
+    setVibeButton();
     refreshBest();
     readScene();
     resize();
@@ -8624,7 +8766,7 @@ body {
   BB.game = {
     state: S, levels: LEVELS, start: () => el.startBtn.click(), home: goHome,
     setAuto: (list) => { S.auto = list; },
-    runSession, showView, showCall, applyHand, dotsHtml, fmt, abort: abortSession,
+    runSession, showView, showCall, applyHand, dotsHtml, fmt, abort: abortSession, scene: () => sceneName, pickScene,
     setStatPts: (text) => { el.statPts.textContent = text; },
   };
 
@@ -11445,6 +11587,7 @@ body {
     G.applyHand();
     const ses = {
       level: { kmh: [120, 140], mix: { fast: 1 }, strike: 1, guide: false, wait: [0.2, 0.4] },
+      sceneSeed: [...V.game.id].reduce((a, c) => a + c.charCodeAt(0), 0),   // 낮/밤: 두 화면이 같게
       firstFast: 0, game: true, delay: 600, defense: 1, bases: 0, outs: 0, runnerS: 55, hint: '', statLabel: '결과', rng: null,
       hud: () => ({ left: '', rightLabel: '', right: '' }),   // 대결은 중계 점수판(renderSb)을 쓴다
       canPitch: () => {
