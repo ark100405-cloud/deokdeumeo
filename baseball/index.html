@@ -873,7 +873,8 @@ body {
 .vs-more summary { cursor: pointer; padding: 4px 0; font-weight: 600; }
 .vs-more[open] { display: flex; flex-direction: column; gap: 6px; }
 /* 친구와 대결: 이모지·명장면·전적·팀 */
-.vs-emo { position: absolute; right: max(10px, env(safe-area-inset-right, 0px)); bottom: calc(150px + env(safe-area-inset-bottom, 0px)); z-index: 6; display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 6px; }
+/* 왼쪽 아래: 투수 구종·코스 판(오른쪽)과 겹치지 않게 */
+.vs-emo { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); bottom: calc(150px + env(safe-area-inset-bottom, 0px)); z-index: 6; display: flex; flex-direction: column-reverse; align-items: flex-start; gap: 6px; }
 .vs-emo__toggle { width: 46px; height: 46px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.92); box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25); font-size: 24px; cursor: pointer; }
 .vs-emo__tray { display: grid; grid-template-columns: repeat(4, 44px); gap: 5px; padding: 7px; border-radius: 14px; background: rgba(255, 255, 255, 0.95); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); }
 .vs-emo__tray[hidden] { display: none; }
@@ -883,7 +884,7 @@ body {
 .vs-pop small { font-size: 11px; font-weight: 700; opacity: 0.6; }
 .vs-pop b { font-size: 40px; line-height: 1; }
 .vs-pop.is-text b { font: 800 20px var(--font-body); }
-.vs-pop.is-mine { top: auto; bottom: calc(205px + env(safe-area-inset-bottom, 0px)); left: auto; right: 16px; transform: none; padding: 5px 11px 7px; animation-name: vsPopMine; }
+.vs-pop.is-mine { top: auto; bottom: calc(205px + env(safe-area-inset-bottom, 0px)); left: 16px; transform: none; padding: 5px 11px 7px; animation-name: vsPopMine; }
 .vs-pop.is-mine b { font-size: 24px; }
 .vs-pop.is-mine.is-text b { font-size: 14px; }
 @keyframes vsPop { 0% { opacity: 0; transform: translateX(-50%) scale(0.6); } 12% { opacity: 1; transform: translateX(-50%) scale(1.08); } 20% { transform: translateX(-50%) scale(1); } 85% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) translateY(-10px); } }
