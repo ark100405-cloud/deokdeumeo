@@ -872,6 +872,30 @@ body {
 .vs-more { font-size: 12px; color: var(--card-dim); }
 .vs-more summary { cursor: pointer; padding: 4px 0; font-weight: 600; }
 .vs-more[open] { display: flex; flex-direction: column; gap: 6px; }
+/* 친구와 대결: 이모지·명장면·전적·팀 */
+.vs-emo { position: absolute; right: max(10px, env(safe-area-inset-right, 0px)); bottom: calc(150px + env(safe-area-inset-bottom, 0px)); z-index: 6; display: flex; flex-direction: column-reverse; align-items: flex-end; gap: 6px; }
+.vs-emo__toggle { width: 46px; height: 46px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.92); box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25); font-size: 24px; cursor: pointer; }
+.vs-emo__tray { display: grid; grid-template-columns: repeat(4, 44px); gap: 5px; padding: 7px; border-radius: 14px; background: rgba(255, 255, 255, 0.95); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); }
+.vs-emo__tray[hidden] { display: none; }
+.vs-emo__btn { height: 40px; border: 0; border-radius: 10px; background: rgba(22, 38, 30, 0.07); font-size: 22px; cursor: pointer; }
+.vs-emo__btn.is-text { grid-column: span 2; font: 700 13px var(--font-body); color: #16261e; }
+.vs-pop { position: absolute; left: 50%; top: calc(128px + env(safe-area-inset-top, 0px)); z-index: 7; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 16px 10px; border-radius: 16px; background: rgba(255, 255, 255, 0.95); color: #16261e; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.28); pointer-events: none; transform: translateX(-50%); animation: vsPop 2.3s ease-out both; }
+.vs-pop small { font-size: 11px; font-weight: 700; opacity: 0.6; }
+.vs-pop b { font-size: 40px; line-height: 1; }
+.vs-pop.is-text b { font: 800 20px var(--font-body); }
+.vs-pop.is-mine { top: auto; bottom: calc(205px + env(safe-area-inset-bottom, 0px)); left: auto; right: 16px; transform: none; padding: 5px 11px 7px; animation-name: vsPopMine; }
+.vs-pop.is-mine b { font-size: 24px; }
+.vs-pop.is-mine.is-text b { font-size: 14px; }
+@keyframes vsPop { 0% { opacity: 0; transform: translateX(-50%) scale(0.6); } 12% { opacity: 1; transform: translateX(-50%) scale(1.08); } 20% { transform: translateX(-50%) scale(1); } 85% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) translateY(-10px); } }
+@keyframes vsPopMine { 0% { opacity: 0; transform: scale(0.7); } 15% { opacity: 1; transform: scale(1); } 80% { opacity: 1; } 100% { opacity: 0; } }
+.vs-banner { position: absolute; left: 50%; top: 38%; z-index: 7; padding: 10px 20px; border-radius: 14px; background: rgba(20, 28, 24, 0.86); color: #ffe27a; font: 400 30px/1.1 var(--font-display); white-space: nowrap; pointer-events: none; transform: translate(-50%, -50%); animation: vsBanner 2.6s ease-out both; }
+.vs-banner.is-hot { background: rgba(200, 16, 46, 0.92); color: #fff; }
+@keyframes vsBanner { 0% { opacity: 0; transform: translate(-50%, -50%) scale(1.6); } 12% { opacity: 1; transform: translate(-50%, -50%) scale(0.95); } 18% { transform: translate(-50%, -50%) scale(1); } 80% { opacity: 1; } 100% { opacity: 0; transform: translate(-50%, -60%); } }
+.vs-welcome { margin: 0; padding: 7px 11px; border-radius: 9px; background: rgba(240, 178, 30, 0.2); font-size: 14px; }
+.vs-hl { margin: 0; padding: 8px 12px; list-style: none; border-radius: 10px; background: rgba(127, 127, 127, 0.1); font-size: 13px; line-height: 1.6; }
+.vs-h2h { margin: 0; font-size: 13px; color: var(--card-dim); }
+.vs-h2h b { color: var(--card-ink); }
+.vs-tc::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 50%; background: var(--tc); vertical-align: 0; }
 </style>
 </head>
 <body>
@@ -3996,6 +4020,13 @@ body {
     click() { tone({ f0: 620, f1: 880, dur: 0.06, type: 'triangle', gain: 0.16 }); },
     /** 투수가 공을 놓는 순간의 가벼운 바람 소리 */
     release() { noise({ dur: 0.09, f0: 2600, f1: 1200, q: 0.9, gain: 0.07, attack: 0.02 }); },
+    /** 승부처: 쿵-쿵 심장 소리 세 번 */
+    heartbeat() {
+      for (let i = 0; i < 3; i++) {
+        tone({ f0: 70, f1: 42, dur: 0.13, gain: 0.32, delay: i * 0.62 });
+        tone({ f0: 62, f1: 38, dur: 0.11, gain: 0.22, delay: i * 0.62 + 0.2 });
+      }
+    },
     fanfare() {
       [523, 659, 784, 1047].forEach((f, i) => tone({ f0: f, dur: 0.22, type: 'triangle', gain: 0.16, delay: i * 0.09 }));
     },
@@ -10568,6 +10599,9 @@ body {
   const PSTAT = { V: 62, M: 58, L: 58 };                    // 대결은 공평하게 같은 능력치
   const COLORS = { host: '#c8102e', guest: '#1d3f8f' };
   const RELEASE = BB.Pitcher.releasePoint();
+  const EMOTES = ['😂', '🔥', '😱', '👏', '🤫', '직구 간다!', '쳐 봐라!', '한 판 더?'];
+  const PITCH_CLOCK = 20000;                                // 투수가 이 안에 못 던지면 고른 대로(안 골랐으면 아무 공이나) 던진다
+  const AWAY = '#8d939b';                                   // 같은 팀을 고르면 참가자는 원정(회색) 유니폼
   const vsTune = () => Object.assign(C.tuneFor({ C: 60, P: 60, E: 60, S: 60 }, 'R'), { real: true });
   const inZone = (r, c) => r >= 1 && r <= 3 && c >= 1 && c <= 3;
   const kmhOf = (type, err) => Math.round(C.fastKmh(PSTAT.V) * BB.PITCH_TYPES[type].speed + (err < 0.12 ? 2 : 0));
@@ -10695,6 +10729,9 @@ body {
     if (okGame(o.game)) c.game = o.game;
     if (okPitch(o.pitch)) c.pitch = o.pitch;
     if (okRes(o.res)) c.res = o.res;
+    c.team = num(o.team, 0, C.PRO_TEAMS.length - 1) && Number.isInteger(o.team) ? o.team : -1;
+    if (o.emo && num(o.emo.n, 1, 1e9) && num(o.emo.k, 0, EMOTES.length - 1) && Number.isInteger(o.emo.k)) c.emo = { n: o.emo.n, k: o.emo.k };
+    if (str(o.again, 12)) c.again = o.again;
     return c;
   }
 
@@ -10720,7 +10757,14 @@ body {
       if (full && !V.running) { leave('방이 꽉 찼어요. 다른 코드로 들어가 주세요.'); return; }
     }
     V.other = pick ? cleanOther(pick.presence.vs) : null;
-    if (!V.mine.host && V.other && V.other.game) V.game = V.other.game;
+    if (!V.mine.host && V.other && V.other.game) { noteGame(V.game, V.other.game); V.game = V.other.game; }
+    // 이모지: 처음 만났을 때 이미 있던 것(지난 경기의 것)은 건너뛰고, 그 뒤로 바뀐 것만 띄운다
+    if (V.other) {
+      if (V.seenEmo == null) V.seenEmo = V.other.emo ? V.other.emo.n : 0;
+      else if (V.other.emo && V.other.emo.n !== V.seenEmo) { V.seenEmo = V.other.emo.n; popEmote(V.other.nick, V.other.emo.k, false); }
+    }
+    if (!before && V.other && !V.running && V.mine.host) { V.welcome = V.other.nick; V.welcomeUntil = Date.now() + 6000; BB.Sfx.cheer(0.35); if (practicing) G.abort(); }
+    emoBarSync();
     if (V.mine.host && V.other && V.other.res) applyResult(V.other.res);
     if (V.running) {
       if (before && !V.other && !V.lostAt) { V.lostAt = Date.now(); V.lost = true; }
@@ -10770,8 +10814,181 @@ body {
       } else if (lastInn && (g2.score.host !== g2.score.guest || g2.inn >= MAX_INN)) g2.over = true;
       else { g2.inn++; g2.top = true; }
     }
+    g2.last = { code: end || res.kind, carry: res.kind === 'play' && num(res.carry, 0, 300) ? Math.round(res.carry) : 0 };
+    noteGame(g, g2);
     V.game = g2;
     pub({ game: g2 });
+  }
+
+  // ── 명장면: 점수가 난 공·홈런·삼진·끝내기를 모은다(두 화면 모두 경기 상태에서 계산) ─────
+  const popcount = (b) => (b & 1) + ((b >> 1) & 1) + ((b >> 2) & 1);
+  function noteGame(prev, next) {
+    if (!V || !next) return;
+    if (!V.hl || V.hlId !== next.id) { V.hl = []; V.hlId = next.id; }
+    if (!prev || prev.id !== next.id || next.n !== prev.n + 1) return;
+    const runs = next.score.host + next.score.guest - prev.score.host - prev.score.guest;
+    const code = next.last && typeof next.last.code === 'string' ? next.last.code : '';
+    const carry = next.last && num(next.last.carry, 0, 300) ? next.last.carry : 0;
+    const walkoff = next.over && !prev.top && prev.inn >= INNINGS && runs > 0 && next.score.host > next.score.guest;
+    const k = /삼진/.test(next.log || '');
+    if (runs > 0 || code === 'HR' || k) V.hl.push({ inn: prev.inn, top: prev.top, bat: battingKey(prev), label: String(next.log || '').slice(0, 20), runs, code, carry, walkoff, k });
+  }
+  function highlights() {
+    const hl = (V && V.hl) || [];
+    const name = (h) => nickOf(h.bat);
+    const when = (h) => `${h.inn}회${h.top ? '초' : '말'}`;
+    const out = [];
+    const wo = hl.find((h) => h.walkoff);
+    if (wo) out.push(`🎆 ${when(wo)} ${name(wo)}의 끝내기 ${wo.code === 'HR' ? '홈런' : '안타'}!`);
+    const hr = hl.filter((h) => h.code === 'HR' && h !== wo).sort((a, b) => b.carry - a.carry)[0];
+    if (hr) out.push(`💥 ${when(hr)} ${name(hr)} ${hr.carry ? hr.carry + 'm ' : ''}${hr.runs >= 4 ? '만루 ' : ''}홈런`);
+    const big = hl.filter((h) => h.runs >= 2 && h.code !== 'HR' && h !== wo).sort((a, b) => b.runs - a.runs)[0];
+    if (big) out.push(`🏃 ${when(big)} ${name(big)} ${big.runs}타점 ${big.label}`);
+    const ks = { host: 0, guest: 0 };
+    for (const h of hl) if (h.k) ks[h.bat === 'host' ? 'guest' : 'host']++;   // 삼진은 투수 몫
+    const kk = ks.host >= ks.guest ? 'host' : 'guest';
+    if (ks[kk] >= 2) out.push(`🎯 ${nickOf(kk)} 삼진 ${ks[kk]}개`);
+    return out.slice(0, 3);
+  }
+
+  // ── 둘만의 전적(이 기기에 저장) ──────────────────────────
+  const H2H_KEY = 'ttak-vs-h2h';
+  function h2hAll() { try { return JSON.parse(localStorage.getItem(H2H_KEY) || '{}') || {}; } catch (e) { return {}; } }
+  function h2hOf(nick) { const r = h2hAll()[nick]; return r && typeof r === 'object' ? { w: r.w | 0, l: r.l | 0, d: r.d | 0, streak: r.streak | 0 } : { w: 0, l: 0, d: 0, streak: 0 }; }
+  function h2hAdd(nick, word) {
+    const all = h2hAll();
+    const r = h2hOf(nick);
+    if (word === '승리!') { r.w++; r.streak = r.streak > 0 ? r.streak + 1 : 1; } else if (word === '패배') { r.l++; r.streak = r.streak < 0 ? r.streak - 1 : -1; } else { r.d++; r.streak = 0; }
+    all[nick] = r;
+    const keys = Object.keys(all);
+    if (keys.length > 50) delete all[keys[0]];
+    try { localStorage.setItem(H2H_KEY, JSON.stringify(all)); } catch (e) { /* 저장 못 해도 경기는 계속 */ }
+    return r;
+  }
+
+  // ── 팀 유니폼 ────────────────────────────────────────────
+  const TEAM_KEY = 'ttak-vs-team';
+  function savedTeam() { try { const t = +localStorage.getItem(TEAM_KEY); return Number.isInteger(t) && t >= 0 && t < C.PRO_TEAMS.length ? t : -1; } catch (e) { return -1; } }
+  const teamOf = (key) => (key === myKey() ? (V.mine.team != null ? V.mine.team : -1) : (other() ? other().team : -1));
+  function colorOf(key) {
+    const t = teamOf(key);
+    if (t < 0) return COLORS[key];
+    // 같은 팀끼리면 참가자는 원정 유니폼
+    if (key === 'guest' && teamOf('host') === t) return AWAY;
+    return C.PRO_TEAMS[t].color;
+  }
+  function teamLabel(key) {
+    const t = teamOf(key);
+    if (t < 0) return key === 'host' ? '빨간 유니폼' : '파란 유니폼';
+    return C.PRO_TEAMS[t].name + (key === 'guest' && teamOf('host') === t ? ' (원정)' : '');
+  }
+  function teamSelect() {
+    const t = V.mine.team != null ? V.mine.team : -1;
+    return `<label class="field vs-team" for="vsTeam"><span>내 유니폼</span><select id="vsTeam" data-vsteam>
+      <option value="-1"${t < 0 ? ' selected' : ''}>기본 (${V.mine.host ? '빨강' : '파랑'})</option>
+      ${C.PRO_TEAMS.map((x, i) => `<option value="${i}"${t === i ? ' selected' : ''}>${esc(x.name)}</option>`).join('')}
+    </select></label>`;
+  }
+
+  // ── 이모지·도발 ──────────────────────────────────────────
+  const stageEl = $('stage');
+  const emoBar = document.createElement('div');
+  emoBar.className = 'vs-emo';
+  emoBar.hidden = true;
+  emoBar.innerHTML = `<button type="button" class="vs-emo__toggle" aria-label="이모지 보내기" aria-expanded="false">😀</button>
+    <div class="vs-emo__tray" hidden>${EMOTES.map((e, i) => `<button type="button" class="vs-emo__btn${e.length > 2 ? ' is-text' : ''}" data-emo="${i}">${esc(e)}</button>`).join('')}</div>`;
+  const emoPop = document.createElement('div');
+  emoPop.className = 'vs-pop';
+  emoPop.hidden = true;
+  const banner = document.createElement('div');
+  banner.className = 'vs-banner';
+  banner.hidden = true;
+  if (stageEl) { stageEl.appendChild(emoBar); stageEl.appendChild(emoPop); stageEl.appendChild(banner); }
+  const tray = emoBar.querySelector('.vs-emo__tray');
+  const toggle = emoBar.querySelector('.vs-emo__toggle');
+  let emoN = 0, emoAt = 0, popTimer = 0, bannerTimer = 0;
+  function emoBarSync() { emoBar.hidden = !(V && V.other); if (emoBar.hidden) { tray.hidden = true; toggle.setAttribute('aria-expanded', 'false'); } }
+  toggle.addEventListener('click', () => { BB.Sfx.click(); tray.hidden = !tray.hidden; toggle.setAttribute('aria-expanded', String(!tray.hidden)); });
+  tray.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-emo]');
+    if (!b || !V) return;
+    const now = Date.now();
+    if (now - emoAt < 1200) return;                         // 도배 막기
+    emoAt = now;
+    const k = +b.dataset.emo;
+    emoN = (emoN || 1 + Math.floor(Math.random() * 1e6)) + 1;   // 보낼 때마다 바뀌는 번호(검사 범위 1~1e9 안)
+    pub({ emo: { n: emoN, k } });
+    popEmote(V.mine.nick, k, true);
+    tray.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+  });
+  function popEmote(nick, k, mine) {
+    const e = EMOTES[k];
+    if (!e) return;
+    emoPop.className = `vs-pop${mine ? ' is-mine' : ''}${e.length > 2 ? ' is-text' : ''}`;
+    emoPop.innerHTML = `<small>${esc(mine ? '나' : nick || '상대')}</small><b>${esc(e)}</b>`;
+    emoPop.hidden = false;
+    emoPop.style.animation = 'none'; void emoPop.offsetWidth; emoPop.style.animation = '';
+    if (!mine) BB.Sfx.click();
+    clearTimeout(popTimer);
+    popTimer = setTimeout(() => { emoPop.hidden = true; }, 2300);
+  }
+  function showBanner(text, cls) {
+    banner.className = `vs-banner ${cls || ''}`;
+    banner.textContent = text;
+    banner.hidden = false;
+    banner.style.animation = 'none'; void banner.offsetWidth; banner.style.animation = '';
+    clearTimeout(bannerTimer);
+    bannerTimer = setTimeout(() => { banner.hidden = true; }, 2600);
+  }
+  /** 승부처 알림: 마지막 이닝 끝내기 찬스·마지막 아웃 */
+  function clutch(g) {
+    if (!g || g.over || g.inn < INNINGS || !V || V.clutchKey === g.id + ':' + g.n) return;
+    V.clutchKey = g.id + ':' + g.n;
+    const runners = popcount(g.bases);
+    let text = '', cls = '';
+    if (!g.top) {
+      const diff = g.score.guest - g.score.host;              // 방장(말 공격)이 지고 있는 점수
+      if (diff >= 0 && diff <= runners) { text = diff === 0 ? '⚡ 끝내기 찬스!' : '⚡ 한 방이면 끝내기!'; cls = 'is-hot'; }
+      else if (g.outs === 2 && diff > 0) { text = '🔥 마지막 아웃까지 하나!'; }
+    } else if (g.outs === 2 && g.score.host > g.score.guest && g.inn >= INNINGS && g.score.host - g.score.guest <= runners + 1) { text = '🔥 마지막 아웃까지 하나!'; }
+    if (!text || V.clutchText === g.id + text + g.outs + g.bases) return;
+    V.clutchText = g.id + text + g.outs + g.bases;
+    showBanner(text, cls);
+    BB.Sfx.heartbeat();
+    BB.Sfx.cheer(0.45);
+  }
+
+  // ── 친구를 기다리는 동안 몸 풀기(혼자 치기) ───────────────────
+  let practicing = false;
+  function warmup() {
+    if (practicing) return;
+    practicing = true;
+    let best = 0, hits = 0, n = 0;
+    BB.setTune(null);
+    G.applyHand();
+    hidePitcherUi();
+    setStatus('');
+    G.runSession({
+      level: G.levels.normal, firstFast: 1, delay: 500, hint: '친구를 기다리는 동안 몸 풀기 · 친구가 오면 바로 알려 줘요',
+      hud: () => ({ left: `<span class="board__label">몸 풀기 · 안타 <b>${hits}</b>/${n}</span>`, rightLabel: '최장 비거리', right: `${best}m` }),
+      judge(ev, call) {
+        if (ev.kind === 'take' && !ev.pitch.strike) return call;
+        n++;
+        if (ev.kind === 'land' && ev.hit.play.code !== 'FOUL') {
+          if (ev.hit.play.code !== 'OUT') hits++;
+          best = Math.max(best, Math.round(ev.hit.dist || 0));
+        }
+        return call;
+      },
+      done: () => false,
+      onAbort: () => { practicing = false; afterWarmup(); },
+    });
+  }
+  function afterWarmup() {
+    if (V) renderRoom();
+    else if (P && P.pj && P.pj.code) renderPjWait();
+    else if (!V) lobby();
   }
 
   // ── 화면: 로비·대기실·결과 ────────────────────────────────
@@ -10820,32 +11037,64 @@ body {
   }
   function renderRoom() {
     if (!V) return;
+    if (practicing) return;                                 // 몸 푸는 중에는 화면을 덮지 않는다(친구가 오면 그때 연다)
     const o = other();
     const g = V.game;
     if (g && g.over) { renderResult(); return; }
+    const welcome = V.welcome && o && Date.now() < (V.welcomeUntil || 0) ? V.welcome : '';
     show(`
       <p class="card__eyebrow">친구와 대결 · ${V.direct ? '로그인 없이' : '방 코드'}</p>
       <h2 class="card__title ${V.direct ? 'card__title--sm' : 'vs-code'}">${V.direct ? '직접 연결' : esc(V.code)}</h2>
       <p class="card__lead">${o ? `<b>${esc(o.nick || '상대')}</b> 님${V.direct ? '과 연결됐어요!' : '이 들어왔어요!'}` : V.direct ? '친구와 연결이 끊겼어요. 방을 나가서 다시 연결해 주세요.' : '친구를 기다리는 중… 이 코드를 보내 주세요.'}</p>
+      ${welcome ? `<p class="vs-welcome">🎉 <b>${esc(welcome)}</b> 님 입장!</p>` : ''}
       <div class="goals">
-        <div class="goal"><span>방장 · 말 공격</span><b>${esc(V.mine.host ? V.mine.nick : (o && o.nick) || '…')}</b><em>빨간 유니폼</em></div>
-        <div class="goal"><span>참가자 · 초 공격</span><b>${esc(V.mine.host ? (o && o.nick) || '…' : V.mine.nick)}</b><em>파란 유니폼</em></div>
+        <div class="goal"><span>방장 · 말 공격</span><b>${esc(V.mine.host ? V.mine.nick : (o && o.nick) || '…')}</b><em style="--tc:${colorOf('host')}" class="vs-tc">${esc(teamLabel('host'))}</em></div>
+        <div class="goal"><span>참가자 · 초 공격</span><b>${esc(V.mine.host ? (o && o.nick) || '…' : V.mine.nick)}</b><em style="--tc:${colorOf('guest')}" class="vs-tc">${esc(teamLabel('guest'))}</em></div>
       </div>
+      ${teamSelect()}
+      ${o ? h2hLine(o.nick) : ''}
       ${V.mine.host ? `<button class="play" type="button" data-vs="start"${o ? '' : ' disabled'}>대결 시작</button>` : '<p class="hint-line">방장이 시작하면 바로 경기가 열려요.</p>'}
+      ${V.mine.host && !o ? '<button class="btn btn--gold" type="button" data-vs="warmup">기다리는 동안 몸 풀기</button>' : ''}
       <button class="btn btn--ghost" type="button" data-vs="leave">방 나가기</button>`);
+  }
+  function h2hLine(nick) {
+    const r = h2hOf(nick);
+    if (!r.w && !r.l && !r.d) return `<p class="hint-line vs-h2h">${esc(nick)} 님과 첫 대결!</p>`;
+    const st = r.streak >= 2 ? ` · ${r.streak}연승 중 🔥` : r.streak <= -2 ? ` · ${-r.streak}연패 중 😤` : '';
+    return `<p class="vs-h2h">${esc(nick)} 님과 전적 <b>${r.w}승 ${r.l}패${r.d ? ` ${r.d}무` : ''}</b>${st}</p>`;
+  }
+  function shareText() {
+    const g = V.game;
+    const hl = highlights();
+    const link = linkable() ? `${location.origin}${location.pathname}` : '';
+    return `⚾ 딱! 배팅볼 투타 대결\n${nickOf('guest')} ${g.score.guest} : ${g.score.host} ${nickOf('host')}${g.inn > INNINGS ? ` (${g.inn}회 연장)` : ''}`
+      + (hl.length ? `\n${hl.join('\n')}` : '') + (link ? `\n나랑도 한 판? ${link}` : '');
   }
   function renderResult() {
     const g = V.game;
     const me = myKey();
     const op = me === 'host' ? 'guest' : 'host';
     const word = g.score[me] > g.score[op] ? '승리!' : g.score[me] < g.score[op] ? '패배' : '무승부';
+    const o = other();
+    // 전적은 경기마다 한 번만 센다
+    if (V.recorded !== g.id && o) { V.recorded = g.id; h2hAdd(o.nick, word); }
+    const hl = highlights();
+    const asked = o && o.again === g.id;                   // 상대가 복수전·한 판 더를 신청했다
+    const iAsked = V.mine.again === g.id;
+    copyText = shareText();
     setStatus('');
     show(`
       <p class="card__eyebrow">친구와 대결 · 경기 끝${g.inn > INNINGS ? ` · ${g.inn}회 연장` : ''}</p>
       <h2 class="card__title">${word}</h2>
       <p class="scoreline"><span>${esc(nickOf('guest'))}</span><b>${g.score.guest}</b><i>:</i><b>${g.score.host}</b><span>${esc(nickOf('host'))}</span></p>
-      ${other() ? '' : `<p class="rival-tag vs-left">상대가 나갔어요.${V.direct ? ' 다시 하려면 방을 나가서 코드를 다시 주고받아 주세요.' : ''}</p>`}
-      ${V.mine.host ? `<button class="play" type="button" data-vs="start"${other() ? '' : ' disabled'}>한 판 더</button>` : other() ? '<p class="hint-line">방장이 "한 판 더"를 누르면 다시 시작해요.</p>' : ''}
+      ${hl.length ? `<ul class="vs-hl">${hl.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+      ${o ? h2hLine(o.nick) : ''}
+      ${o ? '' : `<p class="rival-tag vs-left">상대가 나갔어요.${V.direct ? ' 다시 하려면 방을 나가서 코드를 다시 주고받아 주세요.' : ''}</p>`}
+      ${asked ? `<p class="vs-welcome">🔥 <b>${esc(o.nick)}</b> 님이 ${V.mine.host && word === '승리!' ? '복수전' : '한 판 더'}을 신청했어요!</p>` : ''}
+      ${V.mine.host
+        ? `<button class="play" type="button" data-vs="start"${o ? '' : ' disabled'}>${asked ? '좋아, 받아 준다!' : word === '패배' ? '복수전 시작' : '한 판 더'}</button>`
+        : o ? (iAsked ? '<p class="hint-line">신청했어요! 방장이 받으면 바로 시작해요.</p>' : `<button class="play" type="button" data-vs="again">${word === '패배' ? '복수전 신청' : '한 판 더 신청'}</button>`) : ''}
+      <div class="row2"><button class="btn" type="button" data-vs="copy">결과 복사</button>${shareBtn()}</div>
       <button class="btn btn--ghost" type="button" data-vs="leave">방 나가기</button>`);
     if (word === '승리!' && V.cheered !== g.id) { V.cheered = g.id; BB.Sfx.fanfare(); BB.Sfx.cheer(0.8); }
   }
@@ -10857,7 +11106,7 @@ body {
     join(room, code, host, nick);
   }
   function join(room, code, host, nick, direct) {
-    V = { room, code, direct: !!direct, mine: { app: 'ttak-vs', v: 1, code, nick, host }, other: null, game: null, running: false, lastGame: null };
+    V = { room, code, direct: !!direct, mine: { app: 'ttak-vs', v: 1, code, nick, host, team: savedTeam() }, other: null, game: null, running: false, lastGame: null };
     V.unsub = room.onPeers(() => onPeersChange(), () => { if (V) { setStatus('연결이 끊겼어요'); V.lost = true; } });
     pub({});
     renderRoom();
@@ -10886,6 +11135,7 @@ body {
     h.wait.then((room) => {
       if (!P || P.pj !== h) { room.leave(); return; }
       P = null;
+      if (practicing) G.abort();                           // 몸 풀다가 친구가 오면 바로 대기실로
       join(room, 'direct', true, nick, true);
     });
   }
@@ -10899,6 +11149,7 @@ body {
       <p class="card__lead">친구에게 이 <b>4글자 코드</b>를 알려 주세요. 친구가 <b>친구와 대결 → 코드로 참가</b>하면 바로 연결돼요.</p>
       <div class="row2"><button class="btn btn--gold" type="button" data-vs="copy">${link ? '초대 링크 복사' : '코드 복사'}</button>${shareBtn()}</div>
       <p class="hint-line vs-wait">친구를 기다리는 중…</p>
+      <button class="btn" type="button" data-vs="warmup">기다리는 동안 몸 풀기</button>
       <button class="btn btn--ghost" type="button" data-vs="p2pCancel">취소</button>`);
   }
   async function pjJoin(codeIn) {
@@ -11031,12 +11282,16 @@ body {
     if (btn) { btn.textContent = ok ? '복사했어요!' : '코드를 길게 눌러 복사해 주세요'; setTimeout(() => { if (btn.isConnected) btn.textContent = label; }, 2200); }
   }
   async function shareCode() {
-    const ta = $('vsMyCode') || { value: copyText };
-    try { await navigator.share({ text: copyText && copyText !== ta.value ? copyText : `딱! 배팅볼 대결 연결 코드\n${ta.value}` }); } catch (e) { /* 취소 */ }
+    const ta = $('vsMyCode');
+    const text = !ta ? copyText : copyText && copyText !== ta.value ? copyText : `딱! 배팅볼 대결 연결 코드\n${ta.value}`;
+    if (!text) return;
+    try { await navigator.share({ text }); } catch (e) { /* 취소 */ }
   }
   async function leave(msg) {
     const v = V;
     V = null;
+    emoBarSync();
+    emoPop.hidden = true;
     setStatus('');
     hidePitcherUi();
     if (v) {
@@ -11083,7 +11338,7 @@ body {
 
   function lamps(n, max, cls) { let h = ''; for (let i = 0; i < max; i++) h += `<i class="lamp lamp--${cls}${i < n ? ' is-on' : ''}"></i>`; return h; }
   function teamLook(base, key, number) {
-    const c = COLORS[key];
+    const c = colorOf(key);
     return Object.assign({}, base, { jersey: c, sleeve: c, cap: c, capBill: c, sock: c, number: number || '', numberColor: '#ffffff' });
   }
 
@@ -11147,17 +11402,22 @@ body {
           return;
         }
         if (g && g.over) { hidePitcherUi(); ses.tap = swallow; G.abort(); return; }
+        clutch(g);
         if (bat) {
           ses.tap = undefined;
           hidePitcherUi();
-          setStatus(ses.canPitch() ? '공이 온다!' : `${nickOf(op)} 님이 공을 고르는 중…`);
+          setStatus(ses.canPitch() ? '공이 온다!' : `🤔 ${nickOf(op)} 님이 고민 중…`);
           return;
         }
         // 투수: 다음 공을 고르고 미터를 멈춘다 → 공 정보를 올리고 타자가 칠 때까지 기다린다
         const waiting = V.myPitch && V.myPitch.n > V.replayed;
         if (waiting) { hidePitcherUi(); ses.tap = noTap; setStatus(ses.canPitch() ? '타격 결과 리플레이' : `${nickOf(op)} 님이 치는 중…`); return; }
         if (V.myPitch && V.myPitch.n >= g.n) { hidePitcherUi(); ses.tap = noTap; setStatus('경기 진행 중…'); return; }   // 방장이 결과를 반영하길 기다린다
-        setStatus('');
+        // 피치클락: 이 공을 고르기 시작한 때부터 잰다
+        if (V.clockN !== g.n || V.clockId !== g.id) { V.clockN = g.n; V.clockId = g.id; V.clockAt = now; }
+        const leftMs = PITCH_CLOCK - (now - V.clockAt);
+        if (leftMs <= 0) { autoThrow(); return; }
+        setStatus(leftMs <= 10000 ? `⏱ ${Math.ceil(leftMs / 1000)}초 안에 던지세요` : '');
         if (!sel.type || !sel.cell) {
           meter.hidden = true;
           ses.tap = noTap;
@@ -11213,7 +11473,7 @@ body {
         else if (play && play.dp) label = '병살타';
         const res = {
           gid: p.gid, n: p.n, kind, strike: !!ev.pitch.strike, off, label, sub,
-          code: play ? play.code : null, air: play ? !!play.air : false, carry: play ? play.carry || 0 : 0, tField: play ? play.tField || 0 : 0,
+          code: play ? play.code : null, air: play ? !!play.air : false, carry: play ? play.carry || (play.code === 'HR' && ev.hit.dist) || 0 : 0,   // 홈런은 비거리 tField: play ? play.tField || 0 : 0,
           dp: play ? !!play.dp : false, fc: play ? !!play.fc : false, la: ev.hit ? ev.hit.launch.la : null, seed: p.seed,
         };
         pub({ res });
@@ -11225,10 +11485,21 @@ body {
       onAbort: () => { hidePitcherUi(); if (V) { V.running = false; if (V.game && V.game.over) renderResult(); else leave(V.gaveUp ? '상대와 연결이 끊겨 경기를 마쳤어요' : '경기를 그만뒀어요'); } },
     };
     function noTap() { /* 투수 차례: 화면 터치는 미터에만 */ }
+    /** 피치클락이 다 되면: 고른 대로, 안 골랐으면 아무 구종·한가운데로, 제구는 어중간하게 */
+    function autoThrow() {
+      if (!sel.type) sel.type = TYPES[Math.floor(Math.random() * TYPES.length)];
+      if (!sel.cell) sel.cell = [2, 2];
+      hidePitcherUi();
+      meterTip.textContent = '시간 초과!';
+      showBanner('⏱ 시간 초과! 그냥 던진다', '');
+      throwNow(0.6);
+    }
     function pitcherTap(t, info) {
       if (info.phase !== 'ready' || meter.hidden || !sel.type || !sel.cell) return;
       const u = meterAt(t);
-      const err = meterErr(u);
+      throwNow(meterErr(u));
+    }
+    function throwNow(err) {
       meterTip.textContent = err < 0.13 ? '완벽한 제구!' : err < 0.4 ? '좋아요' : err < 0.7 ? '조금 빗나감' : '제구 실패';
       mark.classList.toggle('is-good', err < 0.13);
       BB.Sfx.click();
@@ -11259,6 +11530,8 @@ body {
     else if (act === 'p2pAnswer') p2pAnswer();
     else if (act === 'p2pCancel') { cancelP2P(); lobby(); }
     else if (act === 'copy') copyCode(b);
+    else if (act === 'warmup') warmup();
+    else if (act === 'again' && V && V.game) { pub({ again: V.game.id }); renderResult(); }
     else if (act === 'share') shareCode();
     else if (act === 'create') { readNick(); enter(code4(), true); }
     else if (act === 'join') {
@@ -11267,12 +11540,25 @@ body {
       readNick();
       enter(code, false);
     } else if (act === 'start' && V && V.mine.host && other()) {
+      if (practicing) G.abort();
       V.game = newGame();
+      V.hl = [];
+      V.hlId = V.game.id;
       V.mine.res = null;
       V.mine.pitch = null;
       pub({ game: V.game, res: null, pitch: null });
       startGame();
     } else if (act === 'leave') leave();
+  });
+  view.addEventListener('change', (e) => {
+    const sel2 = e.target.closest('[data-vsteam]');
+    if (!sel2 || !V) return;
+    const t = +sel2.value;
+    const team = Number.isInteger(t) && t >= 0 && t < C.PRO_TEAMS.length ? t : -1;
+    try { localStorage.setItem(TEAM_KEY, String(team)); } catch (er) { /* 무시 */ }
+    pub({ team });
+    BB.Sfx.click();
+    renderRoom();
   });
   $('vsBtn').addEventListener('click', () => { BB.Sfx.unlock(); BB.Sfx.click(); if (V) renderRoom(); else lobby(); });
   // 초대 링크(#vs=코드)로 열면 바로 참가: 코드를 넣고 답장 코드까지 만든다
