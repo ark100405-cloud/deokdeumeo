@@ -716,7 +716,8 @@ body {
 .pdot--f { background: #9aa4ad; }
 .pdot--x { background: #e8543e; color: #fff; }
 .board__label .is-tired { color: #ff8a73; }
-@media (max-height: 560px) { .pitchpad__zone { width: 150px; margin: 0 auto; } }
+@media (max-height: 560px) { .pitchpad__zone { width: 150px; margin: 0 auto; } .pitchpad { right: calc(max(16px, env(safe-area-inset-right, 0px)) + 48px); } }   /* 가로 휴대폰: 오른쪽 위 홈·소리 버튼을 가리지 않게 */
+@media (max-height: 430px) { .pitchpad { gap: 5px; padding: 7px 8px; bottom: calc(6px + env(safe-area-inset-bottom, 0px)); } .pitchpad__zone { width: 124px; } .pt { padding: 2px; } .pt b { font-size: 13px; } }   /* 아주 낮은 화면: 점수판을 덮지 않게 판을 줄인다 */
 .meter { position: absolute; left: 50%; top: 32%; transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; width: min(320px, calc(100% - 32px)); }
 .meter__bar { position: relative; width: 100%; height: 22px; border-radius: 999px; background: rgba(16, 24, 30, 0.75); box-shadow: inset 0 0 0 1.5px rgba(255, 255, 255, 0.4); }
 .meter__sweet { position: absolute; left: 44%; width: 12%; top: 2px; bottom: 2px; border-radius: 999px; background: var(--gold); }
@@ -11016,7 +11017,7 @@ body {
         <button class="btn btn--gold" type="button" data-vs="pjJoin">코드로 참가</button>
       </div>
       <p class="hint-line">방을 만들면 4글자 코드가 나와요. 친구는 코드만 넣으면 돼요. 같은 와이파이면 가장 잘 돼요.</p>` : ''}
-      <details class="vs-more"${BB.P2P.hasPeer() ? '' : ' open'}><summary>서버 없이 연결(긴 코드)</summary>
+      <details class="vs-more"${BB.P2P.hasPeer() && !/서버/.test(msg || '') ? '' : ' open'}><summary>서버 없이 연결(긴 코드)</summary>
         <div class="row2">
           <button class="btn" type="button" data-vs="p2pHost">초대하기</button>
           <button class="btn" type="button" data-vs="p2pJoin">참가하기</button>
