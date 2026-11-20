@@ -874,9 +874,9 @@ body {
 .vs-more summary { cursor: pointer; padding: 4px 0; font-weight: 600; }
 .vs-more[open] { display: flex; flex-direction: column; gap: 6px; }
 /* 친구와 대결: 이모지·명장면·전적·팀 */
-/* 왼쪽 아래: 투수 구종·코스 판(오른쪽)과 겹치지 않게 */
-.vs-emo { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); bottom: calc(150px + env(safe-area-inset-bottom, 0px)); z-index: 6; display: flex; flex-direction: column-reverse; align-items: flex-start; gap: 6px; }
-.vs-emo__toggle { width: 46px; height: 46px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.92); box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25); font-size: 24px; cursor: pointer; }
+/* 왼쪽 위(점수판 아래): 투구·타격 터치 자리와 투수 판(오른쪽 아래)을 피한다. 트레이는 아래로 열린다 */
+.vs-emo { position: absolute; left: max(10px, env(safe-area-inset-left, 0px)); top: calc(86px + env(safe-area-inset-top, 0px)); z-index: 6; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.vs-emo__toggle { width: 40px; height: 40px; border: 0; border-radius: 50%; background: rgba(255, 255, 255, 0.92); box-shadow: 0 3px 10px rgba(0, 0, 0, 0.25); font-size: 21px; cursor: pointer; }
 .vs-emo__tray { display: grid; grid-template-columns: repeat(4, 44px); gap: 5px; padding: 7px; border-radius: 14px; background: rgba(255, 255, 255, 0.95); box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25); }
 .vs-emo__tray[hidden] { display: none; }
 .vs-emo__btn { height: 40px; border: 0; border-radius: 10px; background: rgba(22, 38, 30, 0.07); font-size: 22px; cursor: pointer; }
@@ -885,7 +885,7 @@ body {
 .vs-pop small { font-size: 11px; font-weight: 700; opacity: 0.6; }
 .vs-pop b { font-size: 40px; line-height: 1; }
 .vs-pop.is-text b { font: 800 20px var(--font-body); }
-.vs-pop.is-mine { top: auto; bottom: calc(205px + env(safe-area-inset-bottom, 0px)); left: 16px; transform: none; padding: 5px 11px 7px; animation-name: vsPopMine; }
+.vs-pop.is-mine { top: calc(86px + env(safe-area-inset-top, 0px)); bottom: auto; left: 58px; transform: none; padding: 5px 11px 7px; animation-name: vsPopMine; }
 .vs-pop.is-mine b { font-size: 24px; }
 .vs-pop.is-mine.is-text b { font-size: 14px; }
 @keyframes vsPop { 0% { opacity: 0; transform: translateX(-50%) scale(0.6); } 12% { opacity: 1; transform: translateX(-50%) scale(1.08); } 20% { transform: translateX(-50%) scale(1); } 85% { opacity: 1; } 100% { opacity: 0; transform: translateX(-50%) translateY(-10px); } }
@@ -898,6 +898,33 @@ body {
 .vs-h2h { margin: 0; font-size: 13px; color: var(--card-dim); }
 .vs-h2h b { color: var(--card-ink); }
 .vs-tc::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 50%; background: var(--tc); vertical-align: 0; }
+
+/* 친구와 대결: 중계 점수판 */
+.stage.is-vs #hudLeft, .stage.is-vs .hud > .board--score { display: none; }
+.vs-sb { display: flex; align-items: stretch; height: 58px; border-radius: 6px; overflow: hidden; background: #2a2d31; color: #fff; box-shadow: 0 3px 10px rgba(0, 0, 0, 0.35); font-family: var(--font-body); }
+.vs-sb[hidden] { display: none; }
+.vs-sb__inn { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 26px; background: #1d1f22; }
+.vs-sb__inn i { font-style: normal; font-size: 9px; color: #b9bec4; line-height: 1; }
+.vs-sb__inn b { font: 400 20px/1 var(--font-display); }
+.vs-sb__teams { display: flex; flex-direction: column; width: 168px; }
+.vs-sb__row { position: relative; display: flex; align-items: center; gap: 5px; flex: 1; min-height: 0; padding-left: 7px; background: var(--tc); background: linear-gradient(90deg, var(--tc), color-mix(in srgb, var(--tc) 70%, #000)); }
+.vs-sb__row + .vs-sb__row { border-top: 1px solid rgba(0, 0, 0, 0.35); }
+.vs-sb__row.is-bat::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: #ffd42a; }
+.vs-sb__logo { flex: none; min-width: 22px; padding: 0 3px; border-radius: 4px; background: rgba(255, 255, 255, 0.18); font: 800 10px/16px var(--font-body); text-align: center; letter-spacing: -0.02em; }
+.vs-sb__name { flex: 1; min-width: 0; overflow: hidden; font-size: 13px; font-weight: 700; white-space: nowrap; text-overflow: ellipsis; }
+.vs-sb__p { flex: none; display: inline-flex; align-items: center; gap: 2px; font-size: 10.5px; font-weight: 700; color: #f2f4f6; font-variant-numeric: tabular-nums; }
+.vs-sb__p i { display: inline-block; width: 13px; height: 13px; border-radius: 3px; background: #d6233a; font: 800 9px/13px var(--font-body); font-style: normal; text-align: center; }
+.vs-sb__score { flex: none; align-self: stretch; display: flex; align-items: center; justify-content: center; width: 30px; background: #e9ebee; color: #16191c; font: 400 19px/1 var(--font-display); font-variant-numeric: tabular-nums; }
+.vs-sb__bases { position: relative; width: 50px; background: #2a2d31; }
+.vs-sb__bases i { position: absolute; width: 13px; height: 13px; border: 1.5px solid #8c9299; background: transparent; transform: rotate(45deg); }
+.vs-sb__bases i.is-on { border-color: #ffd42a; background: #ffd42a; }
+.vs-sb__bases .b2 { left: 18px; top: 11px; }
+.vs-sb__bases .b3 { left: 7px; top: 23px; }
+.vs-sb__bases .b1 { left: 29px; top: 23px; }
+.vs-sb__count { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; width: 58px; border-left: 1px solid rgba(255, 255, 255, 0.08); background: #1d1f22; }
+.vs-sb__count b { font: 400 19px/1 var(--font-display); letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
+.vs-sb__count span { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: #c8cdd2; }
+@media (max-width: 400px) { .vs-sb__teams { width: 150px; } .vs-sb__bases { width: 44px; } .vs-sb__bases .b2 { left: 15px; } .vs-sb__bases .b3 { left: 4px; } .vs-sb__bases .b1 { left: 26px; } .vs-sb__count { width: 50px; } }
 </style>
 </head>
 <body>
@@ -10708,7 +10735,28 @@ body {
   const other = () => V && V.other;
   const myKey = () => (V && V.mine.host ? 'host' : 'guest');
   const battingKey = (g) => (g.top ? 'guest' : 'host');
-  const myRole = () => (V && V.game ? (battingKey(V.game) === myKey() ? 'bat' : 'pitch') : null);
+  // V.game 은 방장이 정한 최신 경기 상태, V.view 는 이 화면이 지금 보여 주는 상태다.
+  // 공 하나의 장면(투구·타격·투수 화면의 리플레이)이 끝나야 view 가 game 을 따라간다:
+  // 장면 도중에 카운트·이닝·공수가 바뀌지 않고(스포 없음), 이닝 마지막 아웃도 끝까지 보고 공수가 바뀐다.
+  const VG = () => (V ? V.view || V.game : null);
+  const roleIn = (g) => (g ? (battingKey(g) === myKey() ? 'bat' : 'pitch') : null);
+  const myRole = () => roleIn(VG());
+  const REPLAY_WAIT = 8000;                                 // 리플레이할 결과가 이만큼 안 오면 건너뛴다(멈춤 방지)
+  function syncView(now) {
+    const g = V.game;
+    if (!g) return;
+    const v = V.view;
+    if (!v || v.id !== g.id || v.n === g.n) { V.view = g; V.oweAt = 0; return; }
+    // 투수: 내가 던진 마지막 공의 리플레이를 아직 안 봤으면 기다린다
+    const owe = roleIn(v) === 'pitch' && V.myPitch && V.myPitch.gid === v.id && V.myPitch.n === v.n && V.myPitch.n > V.replayed;
+    if (owe) {
+      if (!V.oweAt) V.oweAt = now;
+      if (now - V.oweAt < REPLAY_WAIT) return;
+      V.replayed = V.myPitch.n;                            // 결과가 안 오면 리플레이 없이 넘어간다
+    }
+    V.oweAt = 0;
+    V.view = g;
+  }
   const nickOf = (key) => (key === myKey() ? V.mine.nick : (other() && other().nick) || '상대');
 
   // ── 상대가 보낸 값 검사: 모양이 이상하면 버린다(튕김 방지) ─────────
@@ -10816,6 +10864,9 @@ body {
       } else if (lastInn && (g2.score.host !== g2.score.guest || g2.inn >= MAX_INN)) g2.over = true;
       else { g2.inn++; g2.top = true; }
     }
+    const pit = bat === 'host' ? 'guest' : 'host';
+    g2.pc = { host: (g.pc && num(g.pc.host, 0, 999)) ? g.pc.host : 0, guest: (g.pc && num(g.pc.guest, 0, 999)) ? g.pc.guest : 0 };
+    g2.pc[pit]++;
     g2.last = { code: end || res.kind, carry: res.kind === 'play' && num(res.carry, 0, 300) ? Math.round(res.carry) : 0 };
     noteGame(g, g2);
     V.game = g2;
@@ -10961,6 +11012,35 @@ body {
     BB.Sfx.cheer(0.45);
   }
 
+  // ── 중계 점수판: 이닝 · 두 팀(공격 팀 표시, 투수 투구 수) · 주자 · 볼카운트·아웃 ─────
+  const sbEl = document.createElement('div');
+  sbEl.className = 'vs-sb';
+  sbEl.hidden = true;
+  const hudEl = $('hud');
+  if (hudEl) hudEl.insertBefore(sbEl, hudEl.firstChild);
+  let sbKey = '';
+  function sbOff() { sbEl.hidden = true; sbKey = ''; if (stageEl) stageEl.classList.remove('is-vs'); }
+  function renderSb() {
+    const g = VG();
+    if (!V || !g) return;
+    const key = JSON.stringify([g.id, g.n, g.inn, g.top, g.b, g.s, g.outs, g.bases, g.score, g.pc, teamOf('host'), teamOf('guest'), V.mine.nick, other() && other().nick]);
+    if (key === sbKey && !sbEl.hidden) return;
+    sbKey = key;
+    const bat = battingKey(g);
+    const pc = (k) => (g.pc && num(g.pc[k], 0, 999) ? g.pc[k] : 0);
+    const logo = (k) => { const t = teamOf(k); return t >= 0 ? C.PRO_TEAMS[t].short : (nickOf(k) || '?').slice(0, 1); };
+    const row = (k) => `<div class="vs-sb__row${bat === k ? ' is-bat' : ''}" style="--tc:${colorOf(k)}">
+        <span class="vs-sb__logo">${esc(logo(k))}</span><span class="vs-sb__name">${esc(nickOf(k))}</span>
+        ${bat !== k ? `<span class="vs-sb__p" title="투구 수"><i>P</i>${pc(k)}</span>` : ''}
+        <b class="vs-sb__score">${g.score[k]}</b></div>`;
+    const on = (b) => (g.bases & b ? ' is-on' : '');
+    sbEl.innerHTML = `<div class="vs-sb__inn"><i>${g.top ? '▲' : '▼'}</i><b>${g.inn}</b></div>
+      <div class="vs-sb__teams">${row('guest')}${row('host')}</div>
+      <div class="vs-sb__bases" aria-label="${esc(C.BASES_TEXT[g.bases])}"><i class="b2${on(2)}"></i><i class="b3${on(4)}"></i><i class="b1${on(1)}"></i></div>
+      <div class="vs-sb__count"><b>${g.b} - ${g.s}</b><span>${Math.min(2, g.outs)} OUTS</span></div>`;
+    sbEl.hidden = false;
+  }
+
   // ── 친구를 기다리는 동안 몸 풀기(혼자 치기) ───────────────────
   let practicing = false;
   function warmup() {
@@ -11092,7 +11172,7 @@ body {
       ${hl.length ? `<ul class="vs-hl">${hl.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
       ${o ? h2hLine(o.nick) : ''}
       ${o ? '' : `<p class="rival-tag vs-left">상대가 나갔어요.${V.direct ? ' 다시 하려면 방을 나가서 코드를 다시 주고받아 주세요.' : ''}</p>`}
-      ${asked ? `<p class="vs-welcome">🔥 <b>${esc(o.nick)}</b> 님이 ${V.mine.host && word === '승리!' ? '복수전' : '한 판 더'}을 신청했어요!</p>` : ''}
+      ${asked ? `<p class="vs-welcome">🔥 <b>${esc(o.nick)}</b> 님이 ${V.mine.host && word === '승리!' ? '복수전을' : '한 판 더를'} 신청했어요!</p>` : ''}
       ${V.mine.host
         ? `<button class="play" type="button" data-vs="start"${o ? '' : ' disabled'}>${asked ? '좋아, 받아 준다!' : word === '패배' ? '복수전 시작' : '한 판 더'}</button>`
         : o ? (iAsked ? '<p class="hint-line">신청했어요! 방장이 받으면 바로 시작해요.</p>' : `<button class="play" type="button" data-vs="again">${word === '패배' ? '복수전 신청' : '한 판 더 신청'}</button>`) : ''}
@@ -11320,7 +11400,8 @@ body {
     zoneEl.innerHTML = z;
     tipEl.textContent = !sel.type ? '구종을 고르세요' : '던질 곳을 누르세요';
     scoutEl.hidden = false;
-    scoutEl.innerHTML = `<p class="scout__head"><b>타자 ${esc(nickOf(battingKey(V.game)))}</b><span>${V.game.b}볼 ${V.game.s}스트라이크 · ${V.game.outs}아웃</span></p>`;
+    const g = VG();
+    scoutEl.innerHTML = `<p class="scout__head"><b>타자 ${esc(nickOf(battingKey(g)))}</b><span>${g.b}볼 ${g.s}스트라이크 · ${g.outs}아웃</span></p>`;
   }
   typesEl.addEventListener('click', (e) => {
     const b = e.target.closest('[data-vstype]');
@@ -11348,6 +11429,11 @@ body {
     if (!V || !V.game || V.running) return;
     V.running = true;
     V.lastGame = V.game.id;
+    V.view = V.game;
+    V.oweAt = 0;
+    V.thrown = 0;
+    V.replays = 0;
+    sbKey = '';
     V.myPitch = null;
     V.played = -1;
     V.replayed = -1;
@@ -11360,28 +11446,24 @@ body {
     const ses = {
       level: { kmh: [120, 140], mix: { fast: 1 }, strike: 1, guide: false, wait: [0.2, 0.4] },
       firstFast: 0, game: true, delay: 600, defense: 1, bases: 0, outs: 0, runnerS: 55, hint: '', statLabel: '결과', rng: null,
-      hud: () => {
-        const g = V && V.game;
-        if (!g) return { left: '', rightLabel: '', right: '' };
-        return {
-          left: `<span class="board__label">${g.inn}회${g.top ? '초' : '말'} · ${C.BASES_TEXT[g.bases]} · ${myRole() === 'bat' ? '공격' : '수비'}</span>
-            <div class="count"><span class="cnt"><b>B</b>${lamps(g.b, 3, 'b')}</span><span class="cnt"><b>S</b>${lamps(g.s, 2, 's')}</span><span class="cnt"><b>O</b>${lamps(Math.min(2, g.outs), 2, 'o')}</span></div>`,
-          rightLabel: `${nickOf('guest')} : ${nickOf('host')}`, right: `${g.score.guest} : ${g.score.host}`,   // textContent 로 들어간다
-        };
-      },
+      hud: () => ({ left: '', rightLabel: '', right: '' }),   // 대결은 중계 점수판(renderSb)을 쓴다
       canPitch: () => {
-        if (!V || !V.game || V.game.over) return false;
+        const v = VG();
+        if (!V || !v || v.over) return false;
         const o = other();
         if (myRole() === 'bat') {
           const p = o && o.pitch;
-          return !!(p && p.gid === V.game.id && p.n === V.game.n && p.n > V.played);
+          // 타자: 화면이 최신 상태를 따라잡은 뒤의 공만 친다
+          return !!(p && V.game && v.id === V.game.id && v.n === V.game.n && p.gid === v.id && p.n === v.n && p.n > V.played);
         }
         const r = o && o.res;
-        return !!(V.myPitch && r && r.gid === V.game.id && r.n === V.myPitch.n && V.myPitch.n > V.replayed);
+        return !!(V.myPitch && r && r.gid === V.myPitch.gid && r.n === V.myPitch.n && V.myPitch.n > V.replayed);
       },
       frame(now, phase) {
         if (!V) return;
-        const g = V.game;
+        if (phase === 'ready' || phase === 'idle') syncView(now);
+        const g = VG();
+        renderSb();
         // 공수에 따라 유니폼: 내가 치면 나는 타자, 상대가 투수·야수
         const me = myKey();
         const op = me === 'host' ? 'guest' : 'host';
@@ -11483,8 +11565,8 @@ body {
         return Object.assign(call, { main: label, sub });
       },
       done: () => !!(V && V.game && V.game.over),
-      onEnd: () => { hidePitcherUi(); if (V) { V.running = false; renderResult(); } },
-      onAbort: () => { hidePitcherUi(); if (V) { V.running = false; if (V.game && V.game.over) renderResult(); else leave(V.gaveUp ? '상대와 연결이 끊겨 경기를 마쳤어요' : '경기를 그만뒀어요'); } },
+      onEnd: () => { hidePitcherUi(); sbOff(); if (V) { V.running = false; renderResult(); } },
+      onAbort: () => { hidePitcherUi(); sbOff(); if (V) { V.running = false; if (V.game && V.game.over) renderResult(); else leave(V.gaveUp ? '상대와 연결이 끊겨 경기를 마쳤어요' : '경기를 그만뒀어요'); } },
     };
     function noTap() { /* 투수 차례: 화면 터치는 미터에만 */ }
     /** 피치클락이 다 되면: 고른 대로, 안 골랐으면 아무 구종·한가운데로, 제구는 어중간하게 */
@@ -11505,7 +11587,8 @@ body {
       meterTip.textContent = err < 0.13 ? '완벽한 제구!' : err < 0.4 ? '좋아요' : err < 0.7 ? '조금 빗나감' : '제구 실패';
       mark.classList.toggle('is-good', err < 0.13);
       BB.Sfx.click();
-      const g = V.game;
+      const g = VG();
+      V.thrown = (V.thrown || 0) + 1;
       V.myPitch = { gid: g.id, n: g.n, type: sel.type, cell: sel.cell.slice(), err: Math.round(err * 1000) / 1000, kmh: kmhOf(sel.type, err), seed: 1 + Math.floor(Math.random() * 1e9), bases: g.bases, outs: g.outs, b: g.b, s: g.s };
       pub({ pitch: V.myPitch });
       sel.type = null;
@@ -11514,6 +11597,8 @@ body {
     }
     V.session = ses;
     G.runSession(ses);
+    stageEl.classList.add('is-vs');
+    renderSb();
   }
 
   // ── 버튼 ────────────────────────────────────────────────
@@ -11574,7 +11659,7 @@ body {
     }, 300);
   })();
 
-  BB.VS = { buildPitch, state: () => V && { game: V.game, role: myRole(), running: V.running, other: !!V.other, mismatch: V.mismatch || 0, replays: V.replays || 0, code: V.code, direct: V.direct }, p2p: () => P && { host: !!P.h, code: (P.h || P.g).code }, applyResultForTest: (g, res) => { const keep = V; V = { game: g, mine: { host: true }, room: { presence: () => Promise.resolve() } }; applyResult(res); const out = V.game; V = keep; return out; } };
+  BB.VS = { buildPitch, state: () => V && { game: V.game, view: V.view, thrown: V.thrown || 0, role: myRole(), running: V.running, other: !!V.other, mismatch: V.mismatch || 0, replays: V.replays || 0, code: V.code, direct: V.direct }, p2p: () => P && { host: !!P.h, code: (P.h || P.g).code }, applyResultForTest: (g, res) => { const keep = V; V = { game: g, mine: { host: true }, room: { presence: () => Promise.resolve() } }; applyResult(res); const out = V.game; V = keep; return out; } };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 </body>
