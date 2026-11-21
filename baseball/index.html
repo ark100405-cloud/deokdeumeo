@@ -4184,7 +4184,15 @@ body {
     /** 스윙 터치 순간(아이폰용): 맞을 공이면 톡 */
     swing(willHit) {
       if (!on || !willHit || canVibrate() || !isIOS()) return;
-      try { iosSwitch().click(); } catch (e) { /* 무시 */ }
+      const prev = document.activeElement;
+      try {
+        const l = iosSwitch();
+        l.click();
+        // 숨은 스위치가 포커스를 가져가면 키보드(스페이스·엔터) 스윙이 막힌다: 돌려놓는다
+        const input = l.querySelector('input');
+        if (input && document.activeElement === input) input.blur();
+        if (prev && prev !== document.body && typeof prev.focus === 'function') prev.focus({ preventScroll: true });
+      } catch (e) { /* 무시 */ }
     },
     /** 방망이에 맞는 순간: 정타일수록 세게 */
     hit(grade) { buzz(grade === 'perfect' ? [55, 35, 30] : grade === 'good' ? 32 : 14); },
