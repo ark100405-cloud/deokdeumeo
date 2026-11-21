@@ -897,6 +897,11 @@ body {
 .vs-hl { margin: 0; padding: 8px 12px; list-style: none; border-radius: 10px; background: rgba(127, 127, 127, 0.1); font-size: 13px; line-height: 1.6; }
 .vs-h2h { margin: 0; font-size: 13px; color: var(--card-dim); }
 .vs-h2h b { color: var(--card-ink); }
+.vs-player { display: flex; flex-direction: column; gap: 5px; padding: 8px 10px; border-radius: 10px; background: rgba(120, 130, 140, 0.1); box-shadow: inset 0 0 0 1px var(--card-line); }
+.vs-player__head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; margin: 0; font-size: 13px; }
+.vs-player__head span { color: var(--card-dim); font-size: 12px; }
+.vs-player__ars { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; }
+.vs-player__ars i { font-style: normal; font-size: 12px; padding: 2px 7px; border-radius: 99px; background: rgba(127, 127, 127, 0.16); }
 .vs-tc::before { content: ''; display: inline-block; width: 9px; height: 9px; margin-right: 5px; border-radius: 50%; background: var(--tc); vertical-align: 0; }
 
 /* 친구와 대결: 중계 점수판 */
@@ -11154,7 +11159,11 @@ body {
   const MAX_INN = 5;                                        // 동점이면 5회까지 연장, 그래도 같으면 무승부
   const CELL_X = [-0.42, -0.17, 0, 0.17, 0.42];
   const CELL_Y = [1.32, 1.0, 0.78, 0.56, 0.3];
-  const TYPES = ['fast', 'slider', 'change', 'curve', 'split'];
+  // 구종: 선수마다 직구 + 무작위 5개(방에 들어올 때 뽑는다)
+  const POOL = ['slider', 'change', 'curve', 'split', 'cutter', 'sinker', 'sweeper', 'kcurve', 'splitter', 'slurve', 'circle', 'knuckle'];
+  const TYPES = ['fast', ...POOL];
+  const ARS_N = 6;
+  const DEF_ARS = ['fast', 'slider', 'change', 'curve', 'split', 'cutter'];
   const PSTAT = { V: 62, M: 58, L: 58 };                    // 대결은 공평하게 같은 능력치
   const COLORS = { host: '#c8102e', guest: '#1d3f8f' };
   const RELEASE = BB.Pitcher.releasePoint();
@@ -11167,7 +11176,7 @@ body {
   const RELEASES = PFORMS.map((f) => BB.Pitcher.releaseFor('R', f));
   // 도루 성공률: KBO·MLB 평균(2루 도루 약 76%, 3루 약 72%)을 바탕으로 구종·견제 횟수·투구폼으로 조금씩
   const STEAL_BASE = { 1: 0.76, 2: 0.72 };
-  const STEAL_BY_TYPE = { fast: -0.05, slider: 0, change: 0.04, curve: 0.06, split: 0.04 };
+  const STEAL_BY_TYPE = { fast: -0.05, slider: 0, change: 0.04, curve: 0.06, split: 0.04, cutter: -0.03, sinker: -0.04, sweeper: 0.01, kcurve: 0.05, splitter: 0.02, slurve: 0.04, circle: 0.04, knuckle: 0.08 };
   // 견제 아웃: 평소에는 드물고(약 4%), 주자가 막 뛰려던 참이면 절반 넘게 잡힌다
   const PICKOFF_OUT = { hold: 0.04, going: 0.55 };
   const PICKOFF_MAX = 2;                                   // 한 타석에 견제는 두 번까지
@@ -11367,6 +11376,7 @@ body {
     c.team = num(o.team, 0, C.PRO_TEAMS.length - 1) && Number.isInteger(o.team) ? o.team : -1;
     c.pform = num(o.pform, 0, PFORMS.length - 1) && Number.isInteger(o.pform) ? o.pform : 1;
     c.hgt = num(o.hgt, 150, 210) ? Math.round(o.hgt) : 178;
+    c.ars = Array.isArray(o.ars) && o.ars.length === ARS_N && o.ars.every((t) => TYPES.includes(t)) && new Set(o.ars).size === ARS_N ? o.ars.slice() : DEF_ARS;
     c.bform = num(o.bform, 0, BFORMS.length - 1) && Number.isInteger(o.bform) ? o.bform : 0;
     if (o.emo && num(o.emo.n, 1, 1e9) && num(o.emo.k, 0, EMOTES.length - 1) && Number.isInteger(o.emo.k)) c.emo = { n: o.emo.n, k: o.emo.k };
     if (str(o.again, 12)) c.again = o.again;
@@ -11550,14 +11560,26 @@ body {
     return C.PRO_TEAMS[t].name + (key === 'guest' && teamOf('host') === t ? ' (원정)' : '');
   }
   const FORM_KEY = 'ttak-vs-forms';
-  function savedForms() { try { const f = JSON.parse(localStorage.getItem(FORM_KEY) || '{}') || {}; return { pform: Number.isInteger(f.p) && PFORMS[f.p] ? f.p : 1, bform: Number.isInteger(f.b) && BFORMS[f.b] ? f.b : 0, hgt: HEIGHTS.includes(f.h) ? f.h : 178 }; } catch (e) { return { pform: 1, bform: 0, hgt: 178 }; } }
+  function savedForms() { try { const f = JSON.parse(localStorage.getItem(FORM_KEY) || '{}') || {}; return { bform: Number.isInteger(f.b) && BFORMS[f.b] ? f.b : 0 }; } catch (e) { return { bform: 0 }; } }
+  /** 키·투구폼·구종 6개는 방에 들어올 때마다 무작위(선수마다 다르다) */
+  function randomPlayer() {
+    const pool = POOL.slice();
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    return { hgt: HEIGHTS[Math.floor(Math.random() * HEIGHTS.length)], pform: Math.floor(Math.random() * PFORMS.length), ars: ['fast', ...pool.slice(0, ARS_N - 1)] };
+  }
+  const myArs = () => (V && Array.isArray(V.mine.ars) && V.mine.ars.length ? V.mine.ars : DEF_ARS);
+  function playerCard(label, pl) {
+    if (!pl) return `<div class="vs-player"><p class="vs-player__head"><b>${label}</b><span>기다리는 중…</span></p></div>`;
+    const ars = Array.isArray(pl.ars) && pl.ars.length ? pl.ars : DEF_ARS;
+    return `<div class="vs-player"><p class="vs-player__head"><b>${label}</b><span>키 ${pl.hgt || 178}cm · ${esc((PFORMS[pl.pform | 0] || PFORMS[1]).name)}</span></p>
+      <p class="vs-player__ars">${ars.map((t) => `<i>${C.pitchName(t)}</i>`).join('')}</p></div>`;
+  }
   function formSelects() {
-    const pf = V.mine.pform | 0, bf = V.mine.bform | 0;
-    return `<div class="form form--2">
-      <label class="field" for="vsPform"><span>내 투구폼</span><select id="vsPform" data-vsform="p">${PFORMS.map((f, i) => `<option value="${i}"${pf === i ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>
-      <label class="field" for="vsHgt"><span>내 키(ABS 존)</span><select id="vsHgt" data-vsform="h">${HEIGHTS.map((h) => `<option value="${h}"${(V.mine.hgt || 178) === h ? ' selected' : ''}>${h}cm</option>`).join('')}</select></label>
-      <label class="field" for="vsBform"><span>내 타격폼</span><select id="vsBform" data-vsform="b">${BFORMS.map((f, i) => `<option value="${i}"${bf === i ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>
-    </div>`;
+    const bf = V.mine.bform | 0;
+    return `<p class="hint-line">키·투구폼·구종 6개는 무작위로 정해졌어요</p>
+      ${playerCard(`내 선수 · ${esc(V.mine.nick)}`, V.mine)}
+      ${playerCard(`상대 · ${esc((other() && other().nick) || '…')}`, other())}
+      <label class="field" for="vsBform"><span>내 타격폼</span><select id="vsBform" data-vsform="b">${BFORMS.map((f, i) => `<option value="${i}"${bf === i ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>`;
   }
   function teamSelect() {
     const t = V.mine.team != null ? V.mine.team : -1;
@@ -11867,7 +11889,7 @@ body {
     join(room, code, host, nick);
   }
   function join(room, code, host, nick, direct) {
-    V = { room, code, direct: !!direct, mine: Object.assign({ app: 'ttak-vs', v: 1, code, nick, host, team: savedTeam() }, savedForms()), other: null, game: null, running: false, lastGame: null };
+    V = { room, code, direct: !!direct, mine: Object.assign({ app: 'ttak-vs', v: 1, code, nick, host, team: savedTeam() }, savedForms(), randomPlayer()), other: null, game: null, running: false, lastGame: null };
     V.unsub = room.onPeers(() => onPeersChange(), () => { if (V) { setStatus('연결이 끊겼어요'); V.lost = true; } });
     pub({});
     renderRoom();
@@ -12078,7 +12100,7 @@ body {
   const meterAt = (t) => { const x = Math.max(0, t - sel.start) / SWEEP; const f = x % 2; return f < 1 ? f : 2 - f; };
   const meterErr = (u) => { const d = Math.abs(u - 0.5); return d <= half ? (d / half) * 0.12 : 0.12 + ((d - half) / (0.5 - half)) * 0.88; };
   function renderPad() {
-    typesEl.innerHTML = TYPES.map((t) => `<button type="button" class="pt${sel.type === t ? ' is-on' : ''}" data-vstype="${t}"><b>${C.pitchName(t)}</b><i>${kmhOf(t, 0.5)}</i></button>`).join('');
+    typesEl.innerHTML = myArs().map((t) => `<button type="button" class="pt${sel.type === t ? ' is-on' : ''}" data-vstype="${t}"><b>${C.pitchName(t)}</b><i>${kmhOf(t, 0.5)}</i></button>`).join('');
     let z = '';
     for (let r = 0; r < 5; r++) for (let c = 0; c < 5; c++) z += `<button type="button" class="pz${inZone(r, c) ? ' pz--in' : ''}${sel.cell && sel.cell[0] === r && sel.cell[1] === c ? ' is-on' : ''}" data-vsr="${r}" data-vsc="${c}" aria-label="${r + 1}행 ${c + 1}열"></button>`;
     zoneEl.innerHTML = z;
@@ -12106,7 +12128,7 @@ body {
   });
   typesEl.addEventListener('click', (e) => {
     const b = e.target.closest('[data-vstype]');
-    if (!b || !V || !V.running) return;
+    if (!b || !V || !V.running || !myArs().includes(b.dataset.vstype)) return;
     sel.type = b.dataset.vstype;
     BB.Sfx.click();
     renderPad();
@@ -12318,7 +12340,7 @@ body {
     function noTap() { /* 투수 차례: 화면 터치는 미터에만 */ }
     /** 피치클락이 다 되면: 고른 대로, 안 골랐으면 아무 구종·한가운데로, 제구는 어중간하게 */
     function autoThrow() {
-      if (!sel.type) sel.type = TYPES[Math.floor(Math.random() * TYPES.length)];
+      if (!sel.type) { const a = myArs(); sel.type = a[Math.floor(Math.random() * a.length)]; }
       if (!sel.cell) sel.cell = [2, 2];
       hidePitcherUi();
       meterTip.textContent = '시간 초과!';
@@ -12392,9 +12414,9 @@ body {
     if (fsel && V) {
       const v = +fsel.value;
       const k = fsel.dataset.vsform;
-      const patch = k === 'p' ? { pform: PFORMS[v] ? v : 1 } : k === 'h' ? { hgt: HEIGHTS.includes(v) ? v : 178 } : { bform: BFORMS[v] ? v : 0 };
-      pub(patch);
-      try { localStorage.setItem(FORM_KEY, JSON.stringify({ p: V.mine.pform | 0, b: V.mine.bform | 0, h: V.mine.hgt || 178 })); } catch (er) { /* 무시 */ }
+      if (k !== 'b') return;
+      pub({ bform: BFORMS[v] ? v : 0 });
+      try { localStorage.setItem(FORM_KEY, JSON.stringify({ b: V.mine.bform | 0 })); } catch (er) { /* 무시 */ }
       BB.Sfx.click();
       return;
     }
@@ -12421,7 +12443,7 @@ body {
 
   // 시험용(?vslocal 일 때만): 방장이 주자를 놓는다
   function debugBases(bases) { if (!isLocal() || !V || !V.mine.host || !V.game) return false; V.game = Object.assign({}, V.game, { bases }); pub({ game: V.game }); return true; }
-  BB.VS = { debugBases, PFORMS, BFORMS, ABS, absZone, absJudge, cellYFor, buildPitch, state: () => V && { game: V.game, view: V.view, thrown: V.thrown || 0, role: myRole(), running: V.running, other: !!V.other, mismatch: V.mismatch || 0, replays: V.replays || 0, code: V.code, direct: V.direct }, p2p: () => P && { host: !!P.h, code: (P.h || P.g).code }, applyResultForTest: (g, res) => { const keep = V; V = { game: g, mine: { host: true }, room: { presence: () => Promise.resolve() } }; applyResult(res); const out = V.game; V = keep; return out; } };
+  BB.VS = { setMineForTest: (patch) => V && pub(patch), debugBases, PFORMS, BFORMS, ABS, absZone, absJudge, cellYFor, buildPitch, state: () => V && { game: V.game, view: V.view, thrown: V.thrown || 0, role: myRole(), running: V.running, other: !!V.other, mismatch: V.mismatch || 0, replays: V.replays || 0, code: V.code, direct: V.direct }, p2p: () => P && { host: !!P.h, code: (P.h || P.g).code }, applyResultForTest: (g, res) => { const keep = V; V = { game: g, mine: { host: true }, room: { presence: () => Promise.resolve() } }; applyResult(res); const out = V.game; V = keep; return out; } };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 </body>
