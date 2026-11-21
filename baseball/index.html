@@ -942,6 +942,14 @@ body {
 .vs-pk__btn { padding: 6px 10px; border: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.14); color: var(--board-ink); font: 700 13px var(--font-body); cursor: pointer; }
 .vs-pk__btn:disabled { opacity: 0.4; cursor: default; }
 .vs-pk i { font-style: normal; font-size: 11px; color: var(--board-dim); }
+/* 친구와 대결: ABS 트래킹 */
+.vs-abs { position: absolute; right: max(12px, env(safe-area-inset-right, 0px)); top: calc(160px + env(safe-area-inset-top, 0px)); z-index: 6; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 10px 9px; border-radius: 12px; background: rgba(16, 22, 26, 0.86); color: #fff; pointer-events: none; animation: vsAbs 2.6s ease-out both; }
+.vs-abs[hidden] { display: none; }
+.vs-abs b { font: 800 14px var(--font-body); letter-spacing: 0.02em; }
+.vs-abs b.is-s { color: #ffd42a; }
+.vs-abs b.is-b { color: #7fd0ff; }
+.vs-abs span { font-size: 11px; color: #c8cdd2; }
+@keyframes vsAbs { 0% { opacity: 0; transform: translateX(12px); } 10% { opacity: 1; transform: none; } 85% { opacity: 1; } 100% { opacity: 0; } }
 </style>
 </head>
 <body>
@@ -8569,7 +8577,7 @@ body {
 
   /** 가상의 스트라이크 존: 홈플레이트 위에 3×3 칸으로 그린다 */
   function drawZone() {
-    const Z = BB.ZONE;
+    const Z = (S.session && S.session.zone) || BB.ZONE;   // 대결: 타자 키에 맞춘 ABS 존
     const a = cam.project([-Z.x, Z.y1, Z.z]);
     const b = cam.project([Z.x, Z.y0, Z.z]);
     const w = b.x - a.x;
@@ -11048,14 +11056,45 @@ body {
   const stealFrom = (bases) => ((bases & 1) && !(bases & 2) ? 1 : (bases & 2) && !(bases & 4) ? 2 : 0);                                   // 같은 팀을 고르면 참가자는 원정(회색) 유니폼
   const vsTune = () => Object.assign(C.tuneFor({ C: 60, P: 60, E: 60, S: 60 }, 'R'), { real: true });
   const inZone = (r, c) => r >= 1 && r <= 3 && c >= 1 && c <= 3;
+  // ── ABS(자동 볼·스트라이크 판정, KBO 2025 기준) ─────────────
+  //  위 경계 = 타자 키의 55.75%, 아래 경계 = 27.04%, 좌우 = 홈플레이트(43.18cm)에서 양쪽 2cm 넓게.
+  //  공이 존을 조금이라도 스치면 되지만, 홈플레이트 중간면과 끝면 두 곳에서 모두 걸쳐야 스트라이크.
+  const ABS = { top: 0.5575, bot: 0.2704, half: 0.2159 + 0.02, r: 0.037, planes: [0.215, 0] };
+  const HEIGHTS = [160, 165, 170, 175, 178, 180, 183, 185, 188, 190, 195];
+  const absZone = (cm) => ({ zt: Math.round((cm / 100) * ABS.top * 1000) / 1000, zb: Math.round((cm / 100) * ABS.bot * 1000) / 1000 });
+  /** 투수 판의 줄 높이: 타자의 ABS 존에 맞춘다(바깥 두 줄은 존 밖) */
+  const cellYFor = (zt, zb) => { const sp = zt - zb; return [zt + 0.3, zt - sp * 0.12, (zt + zb) / 2, zb + sp * 0.12, Math.max(0.12, zb - 0.16)]; };
+  /** 공이 두 면(중간면·끝면)을 지날 때의 자리와 판정. 볼이면 존에서 얼마나(cm) 어느 쪽으로 벗어났는지 */
+  function absJudge(pitch, zt, zb) {
+    const z0 = pitch.release[2];
+    const pts = ABS.planes.map((z) => pitch.pos(pitch.T * (z0 - z) / (z0 - BB.CONTACT_Z)));
+    const hx = ABS.half + ABS.r;
+    const out = (q) => {
+      const dx = Math.abs(q[0]) - hx;
+      const dyTop = q[1] - ABS.r - zt;
+      const dyBot = zb - (q[1] + ABS.r);
+      const d = Math.max(dx, dyTop, dyBot);
+      const dir = d === dx ? (q[0] < 0 ? '왼쪽' : '오른쪽') : d === dyTop ? '높게' : '낮게';
+      return { d, dir };
+    };
+    const os = pts.map(out);
+    const worst = os[0].d >= os[1].d ? os[0] : os[1];
+    return { strike: worst.d <= 0, pts, miss: Math.max(0, Math.round(worst.d * 1000) / 10), dir: worst.dir, plane: worst === os[0] ? '중간면' : '끝면', zt, zb, hx };
+  }
   const kmhOf = (type, err) => Math.round(C.fastKmh(PSTAT.V) * BB.PITCH_TYPES[type].speed + (err < 0.12 ? 2 : 0));
 
   /** 공 정보 → 투구(두 화면이 똑같이 만든다) */
   function buildPitch(p) {
     const r = BB.makeRng(p.seed);
     const sd = C.locSd(PSTAT.L) * (0.5 + p.err * 1.1);
-    const target = [CELL_X[p.cell[1]] + r.gauss() * sd, Math.max(0.12, CELL_Y[p.cell[0]] + r.gauss() * sd)];
-    return BB.makePitch({ type: p.type, kmh: p.kmh, release: RELEASES[p.pf | 0] || RELEASE, target, rng: r, brkMul: C.brkMul(PSTAT.M) });
+    const CY = p.zt ? cellYFor(p.zt, p.zb) : CELL_Y;
+    const target = [CELL_X[p.cell[1]] + r.gauss() * sd, Math.max(0.12, CY[p.cell[0]] + r.gauss() * sd)];
+    const pitch = BB.makePitch({ type: p.type, kmh: p.kmh, release: RELEASES[p.pf | 0] || RELEASE, target, rng: r, brkMul: C.brkMul(PSTAT.M) });
+    // ABS 판정으로 스트라이크·볼을 정한다(두 화면이 같은 공·같은 존이라 같다)
+    const abs = absJudge(pitch, p.zt || 1.0, p.zb || 0.487);
+    pitch.strike = abs.strike;
+    pitch.abs = abs;
+    return pitch;
   }
 
   // ── 통신: room 의 named room, 안 되면 로비에서 코드로 거르기, 시험용 로컬 ─────
@@ -11190,7 +11229,8 @@ body {
   function okPitch(p) {
     return !!p && str(p.gid, 12) && num(p.n, 0, 1e6) && TYPES.includes(p.type) && Array.isArray(p.cell) && p.cell.length === 2 && num(p.cell[0], 0, 4) && num(p.cell[1], 0, 4)
       && num(p.err, 0, 1) && num(p.kmh, 60, 180) && num(p.seed, 1, 2e9) && num(p.bases, 0, 7) && num(p.outs, 0, 2) && num(p.b, 0, 3) && num(p.s, 0, 2)
-      && (p.pickoff == null || p.pickoff === 1 || p.pickoff === 2) && (p.pf == null || num(p.pf, 0, PFORMS.length - 1));
+      && (p.pickoff == null || p.pickoff === 1 || p.pickoff === 2) && (p.pf == null || num(p.pf, 0, PFORMS.length - 1))
+      && (p.zt == null || (num(p.zt, 0.7, 1.3) && num(p.zb, 0.3, 0.7) && p.zt - p.zb > 0.3));
   }
   function okRes(r) {
     return !!r && str(r.gid, 12) && num(r.n, 0, 1e6) && ['take', 'miss', 'foul', 'play', 'pickoff'].includes(r.kind) && (r.off == null || num(r.off, -5000, 5000))
@@ -11208,6 +11248,7 @@ body {
     if (okRes(o.res)) c.res = o.res;
     c.team = num(o.team, 0, C.PRO_TEAMS.length - 1) && Number.isInteger(o.team) ? o.team : -1;
     c.pform = num(o.pform, 0, PFORMS.length - 1) && Number.isInteger(o.pform) ? o.pform : 1;
+    c.hgt = num(o.hgt, 150, 210) ? Math.round(o.hgt) : 178;
     c.bform = num(o.bform, 0, BFORMS.length - 1) && Number.isInteger(o.bform) ? o.bform : 0;
     if (o.emo && num(o.emo.n, 1, 1e9) && num(o.emo.k, 0, EMOTES.length - 1) && Number.isInteger(o.emo.k)) c.emo = { n: o.emo.n, k: o.emo.k };
     if (str(o.again, 12)) c.again = o.again;
@@ -11391,11 +11432,12 @@ body {
     return C.PRO_TEAMS[t].name + (key === 'guest' && teamOf('host') === t ? ' (원정)' : '');
   }
   const FORM_KEY = 'ttak-vs-forms';
-  function savedForms() { try { const f = JSON.parse(localStorage.getItem(FORM_KEY) || '{}') || {}; return { pform: Number.isInteger(f.p) && PFORMS[f.p] ? f.p : 1, bform: Number.isInteger(f.b) && BFORMS[f.b] ? f.b : 0 }; } catch (e) { return { pform: 1, bform: 0 }; } }
+  function savedForms() { try { const f = JSON.parse(localStorage.getItem(FORM_KEY) || '{}') || {}; return { pform: Number.isInteger(f.p) && PFORMS[f.p] ? f.p : 1, bform: Number.isInteger(f.b) && BFORMS[f.b] ? f.b : 0, hgt: HEIGHTS.includes(f.h) ? f.h : 178 }; } catch (e) { return { pform: 1, bform: 0, hgt: 178 }; } }
   function formSelects() {
     const pf = V.mine.pform | 0, bf = V.mine.bform | 0;
     return `<div class="form form--2">
       <label class="field" for="vsPform"><span>내 투구폼</span><select id="vsPform" data-vsform="p">${PFORMS.map((f, i) => `<option value="${i}"${pf === i ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>
+      <label class="field" for="vsHgt"><span>내 키(ABS 존)</span><select id="vsHgt" data-vsform="h">${HEIGHTS.map((h) => `<option value="${h}"${(V.mine.hgt || 178) === h ? ' selected' : ''}>${h}cm</option>`).join('')}</select></label>
       <label class="field" for="vsBform"><span>내 타격폼</span><select id="vsBform" data-vsform="b">${BFORMS.map((f, i) => `<option value="${i}"${bf === i ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>
     </div>`;
   }
@@ -11475,6 +11517,30 @@ body {
     showBanner(text, cls);
     BB.Sfx.heartbeat();
     BB.Sfx.cheer(0.45);
+  }
+
+  // ── ABS 트래킹: 존과 두 면(중간면 ●, 끝면 ○)에서 공이 지난 자리, 벗어난 거리 ─────
+  const absEl = document.createElement('div');
+  absEl.className = 'vs-abs';
+  absEl.hidden = true;
+  if ($('stage')) $('stage').appendChild(absEl);
+  let absTimer = 0;
+  function showAbs(a) {
+    const W = 92, H = 112;
+    const x0 = -0.55, x1 = 0.55, y0 = 0.15, y1 = 1.45;
+    const px = (x) => ((x - x0) / (x1 - x0)) * W;
+    const py = (y) => H - ((y - y0) / (y1 - y0)) * H;
+    const zr = { l: px(-a.hx), r: px(a.hx), t: py(a.zt + ABS.r), b: py(a.zb - ABS.r) };
+    const dot = (q, fill) => `<circle cx="${px(q[0]).toFixed(1)}" cy="${py(q[1]).toFixed(1)}" r="5" fill="${fill ? (a.strike ? '#ffd24a' : '#7fd0ff') : 'none'}" stroke="${a.strike ? '#ffd24a' : '#7fd0ff'}" stroke-width="2"/>`;
+    absEl.innerHTML = `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">
+        <rect x="${zr.l.toFixed(1)}" y="${zr.t.toFixed(1)}" width="${(zr.r - zr.l).toFixed(1)}" height="${(zr.b - zr.t).toFixed(1)}" fill="rgba(255,255,255,0.08)" stroke="#fff" stroke-width="1.5"/>
+        ${dot(a.pts[1], false)}${dot(a.pts[0], true)}</svg>
+      <b class="${a.strike ? 'is-s' : 'is-b'}">ABS ${a.strike ? '스트라이크' : '볼'}</b>
+      <span>${a.strike ? '두 면 모두 존에 걸침' : `${a.plane}에서 ${a.dir} ${a.miss}cm`}</span>`;
+    absEl.hidden = false;
+    absEl.style.animation = 'none'; void absEl.offsetWidth; absEl.style.animation = '';
+    clearTimeout(absTimer);
+    absTimer = setTimeout(() => { absEl.hidden = true; }, 2600);
   }
 
   // ── 도루 버튼: 내가 공격이고 주자가 있으면, 공이 오기 전에 눌러 둔다(투수는 모른다) ─────
@@ -11903,7 +11969,7 @@ body {
     const g = VG();
     const pk = [1, 2].filter((b) => g.bases & (b === 1 ? 1 : 2));
     const left = PICKOFF_MAX - (g.pko | 0);
-    scoutEl.innerHTML = `<p class="scout__head"><b>타자 ${esc(nickOf(battingKey(g)))}</b><span>${g.b}볼 ${g.s}스트라이크 · ${g.outs}아웃</span></p>`
+    scoutEl.innerHTML = `<p class="scout__head"><b>타자 ${esc(nickOf(battingKey(g)))} · ${batterHgt()}cm</b><span>${g.b}볼 ${g.s}스트라이크 · ${g.outs}아웃</span></p>`
       + (pk.length ? `<div class="vs-pk">${pk.map((b) => `<button type="button" class="vs-pk__btn" data-vspk="${b}"${left > 0 ? '' : ' disabled'}>${b}루 견제</button>`).join('')}<i>${left > 0 ? `이번 타석 ${left}번 남음` : '이번 타석 견제 끝'}</i></div>` : '');
   }
   scoutEl.addEventListener('click', (e) => {
@@ -11936,6 +12002,7 @@ body {
     pad.hidden = true;
   });
 
+  const batterHgt = () => { const g = VG(); const bk = g ? battingKey(g) : 'guest'; return (bk === myKey() ? V.mine.hgt : other() && other().hgt) || 178; };
   function lamps(n, max, cls) { let h = ''; for (let i = 0; i < max; i++) h += `<i class="lamp lamp--${cls}${i < n ? ' is-on' : ''}"></i>`; return h; }
   function teamLook(base, key, number) {
     const c = colorOf(key);
@@ -11994,6 +12061,7 @@ body {
         const bat = myRole() === 'bat';
         const pk = bat ? op : me;
         const bk = bat ? me : op;
+        { const z = absZone((bk === me ? V.mine.hgt : other() && other().hgt) || 178); ses.zone = { x: ABS.half + ABS.r, y0: z.zb, y1: z.zt, z: 0.215 }; }
         ses.pitcherStyle = PFORMS[(pk === me ? V.mine.pform : other() && other().pform) | 0] || PFORMS[1];
         ses.batterStyle = BFORMS[(bk === me ? V.mine.bform : other() && other().bform) | 0] || BFORMS[0];
         ses.pitcherLook = teamLook(BB.LOOKS.pitcher, pk, '1');
@@ -12094,6 +12162,7 @@ body {
       },
       judge(ev, call) {
         const p = ev.pitch.vs.p;
+        if (ev.kind === 'take' && ev.pitch.abs) showAbs(ev.pitch.abs);
         if (ev.pitch.vs.res) {                               // 투수 화면: 타자 화면의 판정을 그대로
           const r = ev.pitch.vs.res;
           // 같은 공·같은 스윙·같은 난수라 타구도 같아야 한다(다르면 기록만 남기고 판정은 타자 쪽을 따른다)
@@ -12149,7 +12218,7 @@ body {
       BB.Sfx.click();
       const g = VG();
       V.thrown = (V.thrown || 0) + 1;
-      V.myPitch = { gid: g.id, n: g.n, type: sel.type, cell: sel.cell.slice(), err: Math.round(err * 1000) / 1000, kmh: kmhOf(sel.type, err), seed: 1 + Math.floor(Math.random() * 1e9), bases: g.bases, outs: g.outs, b: g.b, s: g.s, pf: V.mine.pform | 0 };
+      V.myPitch = { gid: g.id, n: g.n, type: sel.type, cell: sel.cell.slice(), err: Math.round(err * 1000) / 1000, kmh: kmhOf(sel.type, err), seed: 1 + Math.floor(Math.random() * 1e9), bases: g.bases, outs: g.outs, b: g.b, s: g.s, pf: V.mine.pform | 0, ...absZone(batterHgt()) };
       pub({ pitch: V.myPitch });
       sel.type = null;
       sel.cell = null;
@@ -12204,9 +12273,10 @@ body {
     const fsel = e.target.closest('[data-vsform]');
     if (fsel && V) {
       const v = +fsel.value;
-      const patch = fsel.dataset.vsform === 'p' ? { pform: PFORMS[v] ? v : 1 } : { bform: BFORMS[v] ? v : 0 };
+      const k = fsel.dataset.vsform;
+      const patch = k === 'p' ? { pform: PFORMS[v] ? v : 1 } : k === 'h' ? { hgt: HEIGHTS.includes(v) ? v : 178 } : { bform: BFORMS[v] ? v : 0 };
       pub(patch);
-      try { localStorage.setItem(FORM_KEY, JSON.stringify({ p: V.mine.pform | 0, b: V.mine.bform | 0 })); } catch (er) { /* 무시 */ }
+      try { localStorage.setItem(FORM_KEY, JSON.stringify({ p: V.mine.pform | 0, b: V.mine.bform | 0, h: V.mine.hgt || 178 })); } catch (er) { /* 무시 */ }
       BB.Sfx.click();
       return;
     }
@@ -12233,7 +12303,7 @@ body {
 
   // 시험용(?vslocal 일 때만): 방장이 주자를 놓는다
   function debugBases(bases) { if (!isLocal() || !V || !V.mine.host || !V.game) return false; V.game = Object.assign({}, V.game, { bases }); pub({ game: V.game }); return true; }
-  BB.VS = { debugBases, PFORMS, BFORMS, buildPitch, state: () => V && { game: V.game, view: V.view, thrown: V.thrown || 0, role: myRole(), running: V.running, other: !!V.other, mismatch: V.mismatch || 0, replays: V.replays || 0, code: V.code, direct: V.direct }, p2p: () => P && { host: !!P.h, code: (P.h || P.g).code }, applyResultForTest: (g, res) => { const keep = V; V = { game: g, mine: { host: true }, room: { presence: () => Promise.resolve() } }; applyResult(res); const out = V.game; V = keep; return out; } };
+  BB.VS = { debugBases, PFORMS, BFORMS, ABS, absZone, absJudge, cellYFor, buildPitch, state: () => V && { game: V.game, view: V.view, thrown: V.thrown || 0, role: myRole(), running: V.running, other: !!V.other, mismatch: V.mismatch || 0, replays: V.replays || 0, code: V.code, direct: V.direct }, p2p: () => P && { host: !!P.h, code: (P.h || P.g).code }, applyResultForTest: (g, res) => { const keep = V; V = { game: g, mine: { host: true }, room: { presence: () => Promise.resolve() } }; applyResult(res); const out = V.game; V = keep; return out; } };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 </body>
