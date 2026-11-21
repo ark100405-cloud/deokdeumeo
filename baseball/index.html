@@ -933,6 +933,15 @@ body {
 .vs-probe li.is-ok b { color: #1f9d55; }
 .vs-probe li.is-bad b { color: #d6233a; }
 .vs-probe li em { font-style: normal; font-size: 12px; color: var(--card-dim); }
+/* 친구와 대결: 도루·견제 */
+.vs-steal { position: absolute; right: max(14px, env(safe-area-inset-right, 0px)); bottom: calc(160px + env(safe-area-inset-bottom, 0px)); z-index: 6; padding: 10px 14px; border: 0; border-radius: 999px; background: rgba(255, 255, 255, 0.94); color: #16261e; font: 800 15px var(--font-body); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); cursor: pointer; }
+.vs-steal[hidden] { display: none; }
+.vs-steal.is-on { background: #ffd42a; animation: vsStealPulse 0.9s ease-in-out infinite alternate; }
+@keyframes vsStealPulse { from { transform: scale(1); } to { transform: scale(1.07); } }
+.vs-pk { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 6px; }
+.vs-pk__btn { padding: 6px 10px; border: 0; border-radius: 8px; background: rgba(255, 255, 255, 0.14); color: var(--board-ink); font: 700 13px var(--font-body); cursor: pointer; }
+.vs-pk__btn:disabled { opacity: 0.4; cursor: default; }
+.vs-pk i { font-style: normal; font-size: 11px; color: var(--board-dim); }
 </style>
 </head>
 <body>
@@ -2312,9 +2321,36 @@ body {
     };
   }
 
-  /** t: 와인드업 시작부터의 시간(초). idle: 대기 중 숨쉬기 위상(초). hand: 'L' 이면 왼손 투수 */
-  function pose(t, idle, hand) {
-    const p = track.sample(t);
+  // 투구폼(style): 공을 놓는 시각(T_RELEASE)은 그대로 두고 동작만 바꾼다
+  //  kick: 다리 드는 높이 배율, set: 세트 때 손 높이(m), slot: 'over'|'three'|'side' 팔 각도,
+  //  pause: 다리 든 채 멈칫하는 정도(+면 2단 멈춤, −면 퀵모션처럼 앞부분이 빠르다)
+  const sm = (x) => x * x * (3 - 2 * x);
+  const bump = (t, a, m, c) => (t <= a || t >= c ? 0 : t < m ? sm((t - a) / (m - a)) : sm((c - t) / (c - m)));
+  function styled(p, tt, s) {
+    if (s.kick && s.kick !== 1) {
+      const w = bump(tt, 0.12, 0.4, 0.64);
+      p.footL[1] += (s.kick - 1) * 0.62 * w;
+      p.footL[2] -= (s.kick - 1) * 0.16 * w;
+      p.handR[1] += (s.kick - 1) * 0.12 * w; p.handL[1] += (s.kick - 1) * 0.12 * w;
+    }
+    if (s.set) {
+      const w = tt < 0.25 ? 1 - sm(Math.min(1, tt / 0.25)) : tt > 2.8 ? sm(Math.min(1, (tt - 2.8) / 0.25)) : 0;
+      p.handR[1] += s.set * w; p.handL[1] += s.set * w;
+    }
+    if (s.slot && s.slot !== 'three') {
+      const w = bump(tt, 0.78, T_RELEASE, 1.22);
+      if (s.slot === 'side') { p.handR[1] -= 0.46 * w; p.handR[0] -= 0.42 * w; p.spine[0] -= 0.1 * w; }
+      else { p.handR[1] += 0.08 * w; p.handR[0] += 0.12 * w; p.spine[0] += 0.1 * w; }
+    }
+    return p;
+  }
+
+  /** t: 와인드업 시작부터의 시간(초). idle: 대기 중 숨쉬기 위상(초). hand: 'L' 이면 왼손 투수. style: 투구폼 */
+  function pose(t, idle, hand, style) {
+    let tt = t;
+    if (style && style.pause && t > 0 && t < T_RELEASE) tt = t - style.pause * 0.25 * Math.sin(Math.PI * t / T_RELEASE) * T_RELEASE;
+    const p = track.sample(tt);
+    if (style) styled(p, tt, style);
     for (const [foot, a, b] of STEPS) {
       if (t > a && t < b) {
         const u = (t - a) / (b - a);
@@ -2347,8 +2383,8 @@ body {
   }
 
   /** 릴리스 순간 공이 떠나는 지점(세계 좌표) */
-  function releasePoint(hand) {
-    return ballInHand(BB.solveFigure(pose(T_RELEASE, null, hand)), hand);
+  function releasePoint(hand, style) {
+    return ballInHand(BB.solveFigure(pose(T_RELEASE, null, hand, style)), hand);
   }
 
   BB.Pitcher = { ORIGIN, T_RELEASE, T_END, KEYS, pose, ballInHand, releasePoint };
@@ -2459,19 +2495,29 @@ body {
    *  idle: 대기 동작 위상(초), load: 0~1 투구가 오는 동안 체중을 뒤로 싣는 정도
    * 반환: { pose, bat: {knob, tip, dir, grip} }
    */
-  function state({ tau, aimY = 0.85, idle = 0, load = 0 }) {
+  // 타격폼(style): 준비 자세만 바꾼다(스윙이 시작되면 같은 스윙 궤도로 섞여 들어가 맞는 자리는 그대로)
+  //  open: 앞발을 빼는 오픈 스탠스(m), crouch: 웅크림(m), hands: 손 높이(m), bat: 방망이를 세우는 정도,
+  //  kick: 투구가 올 때 앞발 드는 높이(m), waggle: 방망이 흔드는 크기 배율
+  function state({ tau, aimY = 0.85, idle = 0, load = 0, style = null }) {
+    const S = style || {};
     // 준비 자세(대기 동작 포함)
     const st = { ...STANCE, pelvis: STANCE.pelvis.slice(), spine: STANCE.spine.slice(), footL: STANCE.footL.slice() };
     let sGrip = STANCE_GRIP.slice();
     let sDir = STANCE_DIR.slice();
-    const wag = Math.sin(idle * 3.4);
-    sDir = V.norm([sDir[0] + 0.07 * wag, sDir[1], sDir[2] + 0.09 * Math.sin(idle * 3.4 + 1.1)]);
+    if (S.open) { st.footL[0] -= S.open; st.hip += S.open * 70; st.look += S.open * 20; }
+    if (S.crouch) { st.pelvis[1] -= S.crouch; st.spine = [st.spine[0] + S.crouch * 1.2, st.spine[1], st.spine[2]]; sGrip[1] -= S.crouch * 0.8; }
+    if (S.hands) { sGrip[1] += S.hands; sGrip[2] -= S.hands * 0.3; }
+    if (S.bat) sDir = V.norm([sDir[0], sDir[1] + S.bat, sDir[2] * (1 - S.bat * 0.6)]);
+    const wm = S.waggle || 1;
+    const wag = Math.sin(idle * 3.4) * wm;
+    sDir = V.norm([sDir[0] + 0.07 * wag, sDir[1], sDir[2] + 0.09 * wm * Math.sin(idle * 3.4 + 1.1)]);
     sGrip[1] += 0.012 * Math.sin(idle * 6.8);
     st.pelvis[2] += 0.014 * Math.sin(idle * 1.7) - 0.05 * load;
     st.pelvis[1] -= 0.012 * load;
     sGrip[2] -= 0.07 * load;
     sGrip[1] += 0.02 * load;
-    st.footL[1] += 0.035 * load;                 // 앞발을 살짝 든다
+    st.footL[1] += (0.035 + (S.kick || 0)) * load;    // 앞발을 살짝(레그킥이면 크게) 든다
+    if (S.kick) st.footL[2] -= S.kick * 0.7 * load;
     st.spine[2] -= 0.03 * load;
 
     let body = st;
@@ -8623,7 +8669,7 @@ body {
     const actors = S.actors || BB.Defense.compute(actorOpts(null));
     // 투수가 1루 커버를 가는 플레이면, 팔로스루를 마친 뒤 수비 장면의 투수로 바꿔 그린다
     const covering = actors.pitcher && S.hit && S.hit.simT > 0.3;
-    const JP = covering ? actors.pitcher : BB.solveFigure(inMotion ? BB.Pitcher.pose(pitcherClock(tw), null, ph) : BB.Pitcher.pose(0, S.clock, ph));
+    const JP = covering ? actors.pitcher : BB.solveFigure(inMotion ? BB.Pitcher.pose(pitcherClock(tw), null, ph, S.session && S.session.pitcherStyle) : BB.Pitcher.pose(0, S.clock, ph, S.session && S.session.pitcherStyle));
     const bLook = (S.session && S.session.batterLook) || BB.batterLook || BB.LOOKS.batter;
     const sl = S.session || {};
     const looks = { fielder: sl.fielderLook || (inGame ? BB.LOOKS.opp : BB.LOOKS.pitcher), batter: bLook, runner: sl.runnerLook || bLook };
@@ -8660,7 +8706,7 @@ body {
 
     // 타자
     const tau = swingTau(now);
-    const st = BB.Batter.state({ tau, aimY: S.pitch ? S.pitch.aimY : 0.85, idle: S.clock, load: S.load });
+    const st = BB.Batter.state({ tau, aimY: S.pitch ? S.pitch.aimY : 0.85, idle: S.clock, load: S.load, style: S.session && S.session.batterStyle });
     const JB = BB.solveFigure(st.pose);
     if (!actors.batterRunning) {
       BB.drawShadow(ctx, cam, JB.pelvis[0], JB.pelvis[2], 0.6, scene.shadow);
@@ -10975,7 +11021,31 @@ body {
   const RELEASE = BB.Pitcher.releasePoint();
   const EMOTES = ['😂', '🔥', '😱', '👏', '🤫', '직구 간다!', '쳐 봐라!', '한 판 더?'];
   const PITCH_CLOCK = 20000;                                // 투수가 이 안에 못 던지면 고른 대로(안 골랐으면 아무 공이나) 던진다
-  const AWAY = '#8d939b';                                   // 같은 팀을 고르면 참가자는 원정(회색) 유니폼
+  const AWAY = '#8d939b';
+  // 투구폼·타격폼(동작만 다르고 공을 놓는 시각·맞는 자리는 같다). 다리를 높이 들수록 도루 주기 쉽다
+  const PFORMS = [
+    { name: '정통 오버핸드', slot: 'over', kick: 1, set: 0.06, steal: 0 },
+    { name: '스리쿼터', slot: 'three', kick: 1, set: 0, steal: 0 },
+    { name: '사이드암', slot: 'side', kick: 0.9, set: -0.08, steal: 0.01 },
+    { name: '하이킥', slot: 'three', kick: 1.45, set: 0.12, steal: 0.04 },
+    { name: '2단 멈춤', slot: 'three', kick: 1.15, set: 0, pause: 1, steal: 0.02 },
+    { name: '퀵모션', slot: 'three', kick: 0.55, set: -0.05, pause: -0.6, steal: -0.06 },
+  ];
+  const BFORMS = [
+    { name: '표준' },
+    { name: '오픈 스탠스', open: 0.14 },
+    { name: '크라우치', crouch: 0.07, waggle: 0.6 },
+    { name: '하이 핸즈', hands: 0.12, bat: 0.18, waggle: 1.3 },
+    { name: '레그킥', kick: 0.12, waggle: 1.5 },
+  ];
+  const RELEASES = PFORMS.map((f) => BB.Pitcher.releasePoint(undefined, f));
+  // 도루 성공률: KBO·MLB 평균(2루 도루 약 76%, 3루 약 72%)을 바탕으로 구종·견제 횟수·투구폼으로 조금씩
+  const STEAL_BASE = { 1: 0.76, 2: 0.72 };
+  const STEAL_BY_TYPE = { fast: -0.05, slider: 0, change: 0.04, curve: 0.06, split: 0.04 };
+  // 견제 아웃: 평소에는 드물고(약 4%), 주자가 막 뛰려던 참이면 절반 넘게 잡힌다
+  const PICKOFF_OUT = { hold: 0.04, going: 0.55 };
+  const PICKOFF_MAX = 2;                                   // 한 타석에 견제는 두 번까지
+  const stealFrom = (bases) => ((bases & 1) && !(bases & 2) ? 1 : (bases & 2) && !(bases & 4) ? 2 : 0);                                   // 같은 팀을 고르면 참가자는 원정(회색) 유니폼
   const vsTune = () => Object.assign(C.tuneFor({ C: 60, P: 60, E: 60, S: 60 }, 'R'), { real: true });
   const inZone = (r, c) => r >= 1 && r <= 3 && c >= 1 && c <= 3;
   const kmhOf = (type, err) => Math.round(C.fastKmh(PSTAT.V) * BB.PITCH_TYPES[type].speed + (err < 0.12 ? 2 : 0));
@@ -10985,7 +11055,7 @@ body {
     const r = BB.makeRng(p.seed);
     const sd = C.locSd(PSTAT.L) * (0.5 + p.err * 1.1);
     const target = [CELL_X[p.cell[1]] + r.gauss() * sd, Math.max(0.12, CELL_Y[p.cell[0]] + r.gauss() * sd)];
-    return BB.makePitch({ type: p.type, kmh: p.kmh, release: RELEASE, target, rng: r, brkMul: C.brkMul(PSTAT.M) });
+    return BB.makePitch({ type: p.type, kmh: p.kmh, release: RELEASES[p.pf | 0] || RELEASE, target, rng: r, brkMul: C.brkMul(PSTAT.M) });
   }
 
   // ── 통신: room 의 named room, 안 되면 로비에서 코드로 거르기, 시험용 로컬 ─────
@@ -11101,6 +11171,16 @@ body {
     }
     V.oweAt = 0;
     V.view = g;
+    announce(g);
+  }
+  function announce(g) {
+    const e = g && g.last && g.last.ev;
+    if (!e || V.announced === g.id + ':' + g.n) return;
+    V.announced = g.id + ':' + g.n;
+    const T = { SB: ['🏃 도루 성공!', 'is-hot'], CS: ['🎯 도루 저지!', ''], PK: ['🎯 견제사!', 'is-hot'], PKS: ['견제 · 세이프', ''] };
+    if (!T[e]) return;
+    showBanner(T[e][0], T[e][1]);
+    if (e === 'SB' || e === 'PK') BB.Sfx.cheer(0.5); else BB.Sfx.groan(0.4);
   }
   const nickOf = (key) => (key === myKey() ? V.mine.nick : (other() && other().nick) || '상대');
 
@@ -11109,10 +11189,12 @@ body {
   const str = (v, max) => typeof v === 'string' && v.length <= max;
   function okPitch(p) {
     return !!p && str(p.gid, 12) && num(p.n, 0, 1e6) && TYPES.includes(p.type) && Array.isArray(p.cell) && p.cell.length === 2 && num(p.cell[0], 0, 4) && num(p.cell[1], 0, 4)
-      && num(p.err, 0, 1) && num(p.kmh, 60, 180) && num(p.seed, 1, 2e9) && num(p.bases, 0, 7) && num(p.outs, 0, 2) && num(p.b, 0, 3) && num(p.s, 0, 2);
+      && num(p.err, 0, 1) && num(p.kmh, 60, 180) && num(p.seed, 1, 2e9) && num(p.bases, 0, 7) && num(p.outs, 0, 2) && num(p.b, 0, 3) && num(p.s, 0, 2)
+      && (p.pickoff == null || p.pickoff === 1 || p.pickoff === 2) && (p.pf == null || num(p.pf, 0, PFORMS.length - 1));
   }
   function okRes(r) {
-    return !!r && str(r.gid, 12) && num(r.n, 0, 1e6) && ['take', 'miss', 'foul', 'play'].includes(r.kind) && (r.off == null || num(r.off, -5000, 5000))
+    return !!r && str(r.gid, 12) && num(r.n, 0, 1e6) && ['take', 'miss', 'foul', 'play', 'pickoff'].includes(r.kind) && (r.off == null || num(r.off, -5000, 5000))
+      && (r.ptype == null || TYPES.includes(r.ptype)) && (r.base == null || r.base === 1 || r.base === 2)
       && (r.kind !== 'play' || ['OUT', '1B', '2B', '3B', 'HR', 'IF1B'].includes(r.code)) && str(r.label || '', 40) && str(r.sub || '', 80);
   }
   function okGame(g) {
@@ -11125,6 +11207,8 @@ body {
     if (okPitch(o.pitch)) c.pitch = o.pitch;
     if (okRes(o.res)) c.res = o.res;
     c.team = num(o.team, 0, C.PRO_TEAMS.length - 1) && Number.isInteger(o.team) ? o.team : -1;
+    c.pform = num(o.pform, 0, PFORMS.length - 1) && Number.isInteger(o.pform) ? o.pform : 1;
+    c.bform = num(o.bform, 0, BFORMS.length - 1) && Number.isInteger(o.bform) ? o.bform : 0;
     if (o.emo && num(o.emo.n, 1, 1e9) && num(o.emo.k, 0, EMOTES.length - 1) && Number.isInteger(o.emo.k)) c.emo = { n: o.emo.n, k: o.emo.k };
     if (str(o.again, 12)) c.again = o.again;
     return c;
@@ -11180,8 +11264,21 @@ body {
     if (!g || g.over || !res || res.gid !== g.id || res.n !== g.n) return;
     const g2 = JSON.parse(JSON.stringify(g));
     const bat = battingKey(g2);
+    const pit = bat === 'host' ? 'guest' : 'host';
     let end = null;
-    if (res.kind === 'take') { if (res.strike) g2.s++; else g2.b++; }
+    let ev = '';                                           // SB 도루 성공 · CS 도루 실패 · PK 견제사 · PKS 견제 세이프
+    let label = res.label || '';
+    const bitOf = (b) => (b === 1 ? 1 : b === 2 ? 2 : 4);
+    if (res.kind === 'pickoff') {
+      const base = res.base === 2 ? 2 : 1;
+      if (g2.bases & bitOf(base)) {
+        const going = !!res.steal;
+        const r = BB.makeRng((res.seed || 1) * 13 + 5);
+        if (r() < (going ? PICKOFF_OUT.going : PICKOFF_OUT.hold)) { g2.bases &= ~bitOf(base); g2.outs++; ev = 'PK'; label = going ? '견제사! 뛰려다 걸렸다' : '견제사!'; }
+        else { ev = 'PKS'; label = going ? `${base}루 견제 · 간신히 귀루` : `${base}루 견제 · 세이프`; }
+      }
+      g2.pko = (g2.pko | 0) + 1;
+    } else if (res.kind === 'take') { if (res.strike) g2.s++; else g2.b++; }
     else if (res.kind === 'miss') g2.s++;
     else if (res.kind === 'foul') { if (g2.s < 2) g2.s++; }
     else end = res.code;
@@ -11195,8 +11292,21 @@ body {
       g2.outs = r.outs;
       g2.b = 0;
       g2.s = 0;
+      g2.pko = 0;
     }
-    g2.log = res.label || '';
+    // 도루: 타자가 공을 보내거나(볼·스트라이크) 헛스윙했을 때만 결판(파울·인플레이·볼넷이면 그냥 돌아간다)
+    if (res.steal && (res.kind === 'take' || res.kind === 'miss') && end !== 'BB' && g2.outs < 3) {
+      const from = stealFrom(g.bases);
+      if (from && (g2.bases & bitOf(from))) {
+        const pf = PFORMS[(pit === myKey() ? V.mine.pform : other() && other().pform) | 0] || PFORMS[1];
+        let pr = STEAL_BASE[from] + (STEAL_BY_TYPE[res.ptype] || 0) + (pf.steal || 0) - 0.04 * (g.pko | 0);
+        pr = Math.max(0.4, Math.min(0.92, pr));
+        const r = BB.makeRng((res.seed || 1) * 17 + 11);
+        if (r() < pr) { g2.bases = (g2.bases & ~bitOf(from)) | bitOf(from + 1); ev = 'SB'; label = (label ? label + ' · ' : '') + `${from + 1}루 도루 성공!`; }
+        else { g2.bases &= ~bitOf(from); g2.outs++; ev = 'CS'; label = (label ? label + ' · ' : '') + '도루 실패'; }
+      }
+    }
+    g2.log = label;
     g2.n++;
     const lastInn = g2.inn >= INNINGS;
     // 끝내기: 마지막 이닝 말에 방장(홈)이 앞서면 바로 끝
@@ -11209,10 +11319,10 @@ body {
       } else if (lastInn && (g2.score.host !== g2.score.guest || g2.inn >= MAX_INN)) g2.over = true;
       else { g2.inn++; g2.top = true; }
     }
-    const pit = bat === 'host' ? 'guest' : 'host';
+    if (g2.outs === 0 && g2.bases === 0 && g2.b === 0 && g2.s === 0) g2.pko = 0;   // 이닝이 바뀌면 견제 횟수도 처음부터
     g2.pc = { host: (g.pc && num(g.pc.host, 0, 999)) ? g.pc.host : 0, guest: (g.pc && num(g.pc.guest, 0, 999)) ? g.pc.guest : 0 };
-    g2.pc[pit]++;
-    g2.last = { code: end || res.kind, carry: res.kind === 'play' && num(res.carry, 0, 300) ? Math.round(res.carry) : 0 };
+    if (res.kind !== 'pickoff') g2.pc[pit]++;               // 견제는 투구 수에 안 센다
+    g2.last = { code: end || res.kind, ev, carry: res.kind === 'play' && num(res.carry, 0, 300) ? Math.round(res.carry) : 0 };
     noteGame(g, g2);
     V.game = g2;
     pub({ game: g2 });
@@ -11279,6 +11389,15 @@ body {
     const t = teamOf(key);
     if (t < 0) return key === 'host' ? '빨간 유니폼' : '파란 유니폼';
     return C.PRO_TEAMS[t].name + (key === 'guest' && teamOf('host') === t ? ' (원정)' : '');
+  }
+  const FORM_KEY = 'ttak-vs-forms';
+  function savedForms() { try { const f = JSON.parse(localStorage.getItem(FORM_KEY) || '{}') || {}; return { pform: Number.isInteger(f.p) && PFORMS[f.p] ? f.p : 1, bform: Number.isInteger(f.b) && BFORMS[f.b] ? f.b : 0 }; } catch (e) { return { pform: 1, bform: 0 }; } }
+  function formSelects() {
+    const pf = V.mine.pform | 0, bf = V.mine.bform | 0;
+    return `<div class="form form--2">
+      <label class="field" for="vsPform"><span>내 투구폼</span><select id="vsPform" data-vsform="p">${PFORMS.map((f, i) => `<option value="${i}"${pf === i ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>
+      <label class="field" for="vsBform"><span>내 타격폼</span><select id="vsBform" data-vsform="b">${BFORMS.map((f, i) => `<option value="${i}"${bf === i ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>
+    </div>`;
   }
   function teamSelect() {
     const t = V.mine.team != null ? V.mine.team : -1;
@@ -11357,6 +11476,29 @@ body {
     BB.Sfx.heartbeat();
     BB.Sfx.cheer(0.45);
   }
+
+  // ── 도루 버튼: 내가 공격이고 주자가 있으면, 공이 오기 전에 눌러 둔다(투수는 모른다) ─────
+  const stealBtn = document.createElement('button');
+  stealBtn.type = 'button';
+  stealBtn.className = 'vs-steal';
+  stealBtn.hidden = true;
+  if ($('stage')) $('stage').appendChild(stealBtn);
+  function stealBtnSync(g) {
+    const from = g && !g.over && g.outs < 3 ? stealFrom(g.bases) : 0;
+    stealBtn.hidden = !from;
+    if (!from) return;
+    const on = V.stealN === g.n;
+    stealBtn.classList.toggle('is-on', on);
+    const label = on ? '🏃 뛴다! (취소)' : `🏃 ${from + 1}루 도루`;
+    if (stealBtn.textContent !== label) stealBtn.textContent = label;
+  }
+  stealBtn.addEventListener('click', () => {
+    const g = VG();
+    if (!V || !V.running || myRole() !== 'bat' || !g || !stealFrom(g.bases)) return;
+    V.stealN = V.stealN === g.n ? -1 : g.n;
+    BB.Sfx.click();
+    stealBtnSync(g);
+  });
 
   // ── 중계 점수판: 이닝 · 두 팀(공격 팀 표시, 투수 투구 수) · 주자 · 볼카운트·아웃 ─────
   const sbEl = document.createElement('div');
@@ -11484,6 +11626,7 @@ body {
         <div class="goal"><span>참가자 · 초 공격</span><b>${esc(V.mine.host ? (o && o.nick) || '…' : V.mine.nick)}</b><em style="--tc:${colorOf('guest')}" class="vs-tc">${esc(teamLabel('guest'))}</em></div>
       </div>
       ${teamSelect()}
+      ${formSelects()}
       ${o ? h2hLine(o.nick) : ''}
       ${V.mine.host ? `<button class="play" type="button" data-vs="start"${o ? '' : ' disabled'}>대결 시작</button>` : '<p class="hint-line">방장이 시작하면 바로 경기가 열려요.</p>'}
       ${V.mine.host && !o && V.room.relay ? inviteRow() : ''}
@@ -11540,7 +11683,7 @@ body {
     join(room, code, host, nick);
   }
   function join(room, code, host, nick, direct) {
-    V = { room, code, direct: !!direct, mine: { app: 'ttak-vs', v: 1, code, nick, host, team: savedTeam() }, other: null, game: null, running: false, lastGame: null };
+    V = { room, code, direct: !!direct, mine: Object.assign({ app: 'ttak-vs', v: 1, code, nick, host, team: savedTeam() }, savedForms()), other: null, game: null, running: false, lastGame: null };
     V.unsub = room.onPeers(() => onPeersChange(), () => { if (V) { setStatus('연결이 끊겼어요'); V.lost = true; } });
     pub({});
     renderRoom();
@@ -11758,8 +11901,25 @@ body {
     tipEl.textContent = !sel.type ? '구종을 고르세요' : '던질 곳을 누르세요';
     scoutEl.hidden = false;
     const g = VG();
-    scoutEl.innerHTML = `<p class="scout__head"><b>타자 ${esc(nickOf(battingKey(g)))}</b><span>${g.b}볼 ${g.s}스트라이크 · ${g.outs}아웃</span></p>`;
+    const pk = [1, 2].filter((b) => g.bases & (b === 1 ? 1 : 2));
+    const left = PICKOFF_MAX - (g.pko | 0);
+    scoutEl.innerHTML = `<p class="scout__head"><b>타자 ${esc(nickOf(battingKey(g)))}</b><span>${g.b}볼 ${g.s}스트라이크 · ${g.outs}아웃</span></p>`
+      + (pk.length ? `<div class="vs-pk">${pk.map((b) => `<button type="button" class="vs-pk__btn" data-vspk="${b}"${left > 0 ? '' : ' disabled'}>${b}루 견제</button>`).join('')}<i>${left > 0 ? `이번 타석 ${left}번 남음` : '이번 타석 견제 끝'}</i></div>` : '');
   }
+  scoutEl.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-vspk]');
+    if (!b || b.disabled || !V || !V.running || myRole() !== 'pitch') return;
+    const g = VG();
+    if (!g || (g.pko | 0) >= PICKOFF_MAX || (V.myPitch && V.myPitch.n >= g.n)) return;
+    const base = +b.dataset.vspk;
+    if (!(g.bases & (base === 1 ? 1 : 2))) return;
+    BB.Sfx.whoosh();
+    V.myPitch = { gid: g.id, n: g.n, type: 'fast', cell: [2, 2], err: 0, kmh: 100, seed: 1 + Math.floor(Math.random() * 1e9), bases: g.bases, outs: g.outs, b: g.b, s: g.s, pickoff: base, pf: V.mine.pform | 0 };
+    sel.type = null; sel.cell = null;
+    hidePitcherUi();
+    pub({ pitch: V.myPitch });
+    showBanner(`${base}루 견제!`, '');
+  });
   typesEl.addEventListener('click', (e) => {
     const b = e.target.closest('[data-vstype]');
     if (!b || !V || !V.running) return;
@@ -11790,6 +11950,7 @@ body {
     V.oweAt = 0;
     V.thrown = 0;
     V.replays = 0;
+    V.stealN = -1;
     sbKey = '';
     V.myPitch = null;
     V.played = -1;
@@ -11813,12 +11974,12 @@ body {
         if (myRole() === 'bat') {
           const p = o && o.pitch;
           // 타자: 화면이 최신 상태를 따라잡은 뒤의 공만 친다
-          const ok = !!(p && V.game && v.id === V.game.id && v.n === V.game.n && p.gid === v.id && p.n === v.n && p.n > V.played);
+          const ok = !!(p && !p.pickoff && V.game && v.id === V.game.id && v.n === V.game.n && p.gid === v.id && p.n === v.n && p.n > V.played);
           if (ok) V.ready = { bat: true, p, res: null };
           return ok;
         }
         const r = o && o.res;
-        const ok = !!(V.myPitch && r && r.gid === V.myPitch.gid && r.n === V.myPitch.n && V.myPitch.n > V.replayed);
+        const ok = !!(V.myPitch && !V.myPitch.pickoff && r && r.gid === V.myPitch.gid && r.n === V.myPitch.n && V.myPitch.n > V.replayed);
         if (ok) V.ready = { bat: false, p: V.myPitch, res: r };
         return ok;
       },
@@ -11833,6 +11994,8 @@ body {
         const bat = myRole() === 'bat';
         const pk = bat ? op : me;
         const bk = bat ? me : op;
+        ses.pitcherStyle = PFORMS[(pk === me ? V.mine.pform : other() && other().pform) | 0] || PFORMS[1];
+        ses.batterStyle = BFORMS[(bk === me ? V.mine.bform : other() && other().bform) | 0] || BFORMS[0];
         ses.pitcherLook = teamLook(BB.LOOKS.pitcher, pk, '1');
         ses.fielderLook = teamLook(BB.LOOKS.pitcher, pk, '');
         ses.batterLook = teamLook(BB.LOOKS.oppBatter, bk, '7');
@@ -11853,10 +12016,32 @@ body {
         if (bat) {
           ses.tap = undefined;
           hidePitcherUi();
-          setStatus(ses.canPitch() ? '공이 온다!' : `🤔 ${nickOf(op)} 님이 고민 중…`);
+          const o = other();
+          const pp = o && o.pitch;
+          // 견제: 공 대신 견제가 왔다 → 결과를 바로 올린다(뛰려던 참이었는지 함께)
+          if (pp && pp.pickoff && V.game && g.id === V.game.id && g.n === V.game.n && pp.gid === g.id && pp.n === g.n && pp.n > V.played) {
+            V.played = pp.n;
+            const res = { gid: pp.gid, n: pp.n, kind: 'pickoff', base: pp.pickoff, steal: V.stealN === pp.n, seed: pp.seed, label: '', sub: '' };
+            V.stealN = -1;
+            showBanner(`${pp.pickoff}루 견제!`, '');
+            pub({ res });
+            if (V.mine.host) applyResult(res);
+            stealBtnSync(null);
+            return;
+          }
+          const can = ses.canPitch();
+          stealBtnSync(can ? null : g);
+          setStatus(can ? (V.stealN === g.n ? '🏃 주자 스타트!' : '공이 온다!') : V.stealN === g.n ? `🏃 도루 준비 · 다음 공에 ${stealFrom(g.bases)}루 주자가 뜁니다` : `🤔 ${nickOf(op)} 님이 고민 중…`);
           return;
         }
+        stealBtnSync(null);
         // 투수: 다음 공을 고르고 미터를 멈춘다 → 공 정보를 올리고 타자가 칠 때까지 기다린다
+        if (V.myPitch && V.myPitch.pickoff && V.myPitch.n > V.replayed) {
+          const r = other() && other().res;
+          if (r && r.gid === V.myPitch.gid && r.n === V.myPitch.n) V.replayed = V.myPitch.n;
+          hidePitcherUi(); ses.tap = noTap; setStatus('견제 중…');
+          return;
+        }
         const waiting = V.myPitch && V.myPitch.n > V.replayed;
         if (waiting) { hidePitcherUi(); ses.tap = noTap; setStatus(ses.canPitch() ? '타격 결과 리플레이' : `${nickOf(op)} 님이 치는 중…`); return; }
         if (V.myPitch && V.myPitch.n >= g.n) { hidePitcherUi(); ses.tap = noTap; setStatus('경기 진행 중…'); return; }   // 방장이 결과를 반영하길 기다린다
@@ -11868,7 +12053,9 @@ body {
         if (!sel.type || !sel.cell) {
           meter.hidden = true;
           ses.tap = noTap;
-          if (pad.hidden) { renderPad(); pad.hidden = false; }
+          // 주자·견제 횟수가 바뀌면 판을 다시 그린다(견제 버튼)
+          const pk = `${g.id}:${g.n}:${g.bases}:${g.pko | 0}`;
+          if (pad.hidden || V.padKey !== pk) { V.padKey = pk; renderPad(); pad.hidden = false; }
           return;
         }
         pad.hidden = true;
@@ -11923,16 +12110,18 @@ body {
         else if (play && play.dp) label = '병살타';
         const res = {
           gid: p.gid, n: p.n, kind, strike: !!ev.pitch.strike, off, label, sub,
-          code: play ? play.code : null, air: play ? !!play.air : false, carry: play ? play.carry || (play.code === 'HR' && ev.hit.dist) || 0 : 0,   // 홈런은 비거리 tField: play ? play.tField || 0 : 0,
+          code: play ? play.code : null, air: play ? !!play.air : false, carry: play ? play.carry || (play.code === 'HR' && ev.hit.dist) || 0 : 0, tField: play ? play.tField || 0 : 0,   // 홈런은 carry 대신 비거리
           dp: play ? !!play.dp : false, fc: play ? !!play.fc : false, la: ev.hit ? ev.hit.launch.la : null, seed: p.seed,
+          ptype: p.type, steal: V.stealN === p.n && !!stealFrom(p.bases),
         };
+        V.stealN = -1;
         pub({ res });
         if (V.mine.host) applyResult(res);
         return Object.assign(call, { main: label, sub });
       },
       done: () => !!(V && V.game && V.game.over),
-      onEnd: () => { hidePitcherUi(); sbOff(); if (V) { V.running = false; emoBarSync(); renderResult(); } },
-      onAbort: () => { hidePitcherUi(); sbOff(); if (V) { V.running = false; emoBarSync(); if (V.game && V.game.over) renderResult(); else leave(V.gaveUp ? '상대와 연결이 끊겨 경기를 마쳤어요' : '경기를 그만뒀어요'); } },
+      onEnd: () => { hidePitcherUi(); sbOff(); stealBtn.hidden = true; if (V) { V.running = false; emoBarSync(); renderResult(); } },
+      onAbort: () => { hidePitcherUi(); sbOff(); stealBtn.hidden = true; if (V) { V.running = false; emoBarSync(); if (V.game && V.game.over) renderResult(); else leave(V.gaveUp ? '상대와 연결이 끊겨 경기를 마쳤어요' : '경기를 그만뒀어요'); } },
     };
     function noTap() { /* 투수 차례: 화면 터치는 미터에만 */ }
     /** 피치클락이 다 되면: 고른 대로, 안 골랐으면 아무 구종·한가운데로, 제구는 어중간하게 */
@@ -11955,7 +12144,7 @@ body {
       BB.Sfx.click();
       const g = VG();
       V.thrown = (V.thrown || 0) + 1;
-      V.myPitch = { gid: g.id, n: g.n, type: sel.type, cell: sel.cell.slice(), err: Math.round(err * 1000) / 1000, kmh: kmhOf(sel.type, err), seed: 1 + Math.floor(Math.random() * 1e9), bases: g.bases, outs: g.outs, b: g.b, s: g.s };
+      V.myPitch = { gid: g.id, n: g.n, type: sel.type, cell: sel.cell.slice(), err: Math.round(err * 1000) / 1000, kmh: kmhOf(sel.type, err), seed: 1 + Math.floor(Math.random() * 1e9), bases: g.bases, outs: g.outs, b: g.b, s: g.s, pf: V.mine.pform | 0 };
       pub({ pitch: V.myPitch });
       sel.type = null;
       sel.cell = null;
@@ -12007,6 +12196,15 @@ body {
     } else if (act === 'leave') leave();
   });
   view.addEventListener('change', (e) => {
+    const fsel = e.target.closest('[data-vsform]');
+    if (fsel && V) {
+      const v = +fsel.value;
+      const patch = fsel.dataset.vsform === 'p' ? { pform: PFORMS[v] ? v : 1 } : { bform: BFORMS[v] ? v : 0 };
+      pub(patch);
+      try { localStorage.setItem(FORM_KEY, JSON.stringify({ p: V.mine.pform | 0, b: V.mine.bform | 0 })); } catch (er) { /* 무시 */ }
+      BB.Sfx.click();
+      return;
+    }
     const sel2 = e.target.closest('[data-vsteam]');
     if (!sel2 || !V) return;
     const t = +sel2.value;
@@ -12028,7 +12226,9 @@ body {
     }, 300);
   })();
 
-  BB.VS = { buildPitch, state: () => V && { game: V.game, view: V.view, thrown: V.thrown || 0, role: myRole(), running: V.running, other: !!V.other, mismatch: V.mismatch || 0, replays: V.replays || 0, code: V.code, direct: V.direct }, p2p: () => P && { host: !!P.h, code: (P.h || P.g).code }, applyResultForTest: (g, res) => { const keep = V; V = { game: g, mine: { host: true }, room: { presence: () => Promise.resolve() } }; applyResult(res); const out = V.game; V = keep; return out; } };
+  // 시험용(?vslocal 일 때만): 방장이 주자를 놓는다
+  function debugBases(bases) { if (!isLocal() || !V || !V.mine.host || !V.game) return false; V.game = Object.assign({}, V.game, { bases }); pub({ game: V.game }); return true; }
+  BB.VS = { debugBases, PFORMS, BFORMS, buildPitch, state: () => V && { game: V.game, view: V.view, thrown: V.thrown || 0, role: myRole(), running: V.running, other: !!V.other, mismatch: V.mismatch || 0, replays: V.replays || 0, code: V.code, direct: V.direct }, p2p: () => P && { host: !!P.h, code: (P.h || P.g).code }, applyResultForTest: (g, res) => { const keep = V; V = { game: g, mine: { host: true }, room: { presence: () => Promise.resolve() } }; applyResult(res); const out = V.game; V = keep; return out; } };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 </body>
