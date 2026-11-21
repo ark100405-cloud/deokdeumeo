@@ -925,6 +925,14 @@ body {
 .vs-sb__count b { font: 400 19px/1 var(--font-display); letter-spacing: 0.02em; font-variant-numeric: tabular-nums; }
 .vs-sb__count span { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; color: #c8cdd2; }
 @media (max-width: 400px) { .vs-sb__teams { width: 150px; } .vs-sb__bases { width: 44px; } .vs-sb__bases .b2 { left: 15px; } .vs-sb__bases .b3 { left: 4px; } .vs-sb__bases .b1 { left: 26px; } .vs-sb__count { width: 50px; } }
+/* 친구와 대결: 연결 확인 */
+.linkbtn { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; font-weight: 700; text-decoration: underline; cursor: pointer; }
+.vs-probe { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.vs-probe li { display: grid; grid-template-columns: 22px 1fr auto; align-items: center; gap: 6px; padding: 7px 10px; border-radius: 8px; background: rgba(127, 127, 127, 0.1); font-size: 14px; }
+.vs-probe li b { text-align: center; color: var(--card-dim); }
+.vs-probe li.is-ok b { color: #1f9d55; }
+.vs-probe li.is-bad b { color: #d6233a; }
+.vs-probe li em { font-style: normal; font-size: 12px; color: var(--card-dim); }
 </style>
 </head>
 <body>
@@ -10693,10 +10701,13 @@ body {
 (function (global) {
   'use strict';
   const BB = global.BB;
+  // 공개 무료 서버(가입 없음). 학교·회사·일부 통신망은 443 이 아닌 포트를 막으므로 443 서버도 함께 쓴다
   const BROKERS = [
-    'wss://broker.emqx.io:8084/mqtt',
-    'wss://broker.hivemq.com:8884/mqtt',
-    'wss://test.mosquitto.org:8081/mqtt',
+    { name: 'EMQX', url: 'wss://broker.emqx.io:8084/mqtt' },
+    { name: 'HiveMQ', url: 'wss://broker.hivemq.com:8884/mqtt' },
+    { name: 'Mosquitto', url: 'wss://test.mosquitto.org:8081/mqtt' },
+    { name: 'Eclipse', url: 'wss://mqtt.eclipseprojects.io:443/mqtt' },
+    { name: 'shiftr', url: 'wss://public.cloud.shiftr.io:443', user: 'public', pass: 'public' },
   ];
   const BASE = 'ttakbb/v1/';
   const BEAT = 2000;          // 내 상태 다시 올리기
@@ -10712,7 +10723,9 @@ body {
   const strBytes = (s) => { const b = enc.encode(s); return [b.length >> 8, b.length & 255, ...b]; };
   const packet = (head, body) => new Uint8Array([head, ...lenBytes(body.length), ...body]);
   /** 서버 하나에 붙는다. 반환: { sub, pub, onMessage, onClose, close } */
-  function connect(url, will, ms = 6000) {
+  function connect(broker, will, ms = 6000) {
+    const b = typeof broker === 'string' ? { url: broker } : broker;
+    const url = b.url;
     return new Promise((res, rej) => {
       let ws;
       try { ws = new WebSocket(url, ['mqtt']); } catch (e) { rej(e); return; }
@@ -10726,6 +10739,7 @@ body {
       const send = (u8) => { if (ws.readyState === 1) { try { ws.send(u8); } catch (e) { /* 끊김 */ } } };
       const client = {
         url,
+        broker: b,
         sub(topic) { const id = pid++; send(packet(0x82, [id >> 8, id & 255, ...strBytes(topic), 0])); },
         pub(topic, text) { send(packet(0x30, [...strBytes(topic), ...enc.encode(text)])); },
         onMessage(fn) { handlers.msg = fn; },
@@ -10738,6 +10752,8 @@ body {
         let flags = 0x02;                                    // 깨끗한 세션
         let pay = strBytes(id);
         if (will) { flags |= 0x04; pay = pay.concat(strBytes(will.topic), strBytes(will.text)); }   // 갑자기 끊기면 서버가 "나감"을 대신 올린다
+        if (b.user != null) { flags |= 0x80; pay = pay.concat(strBytes(b.user)); }
+        if (b.pass != null) { flags |= 0x40; pay = pay.concat(strBytes(b.pass)); }
         send(packet(0x10, [...strBytes('MQTT'), 4, flags, 0, 30, ...pay]));
       };
       ws.onmessage = (ev) => {
@@ -10809,14 +10825,14 @@ body {
       clients.add(c);
       c.onMessage(onMsg);
       c.sub(base + '+');
-      c.onClose(() => { clients.delete(c); if (!closed) { if (!clients.size) for (const f of errFns) { try { f(); } catch (e) { /* 무시 */ } } retry(c.url, 1); } });
+      c.onClose(() => { clients.delete(c); if (!closed) { if (!clients.size) for (const f of errFns) { try { f(); } catch (e) { /* 무시 */ } } retry(c.broker, 1); } });
       c.pub(mineTopic, text());
     }
     async function retry(url, n) {
       if (closed || n > 8) return;
       await new Promise((r) => setTimeout(r, Math.min(8000, 700 * n)));
       if (closed) return;
-      try { attach(await connect(url, will)); } catch (e) { retry(url, n + 1); }
+      try { attach(await connect(url, will)); } catch (e) { retry(url, n + 1); }   // url 자리에 서버 정보(broker)가 온다
     }
     const beat = setInterval(() => {
       publish();
@@ -10888,7 +10904,34 @@ body {
     });
   }
 
-  BB.Relay = { supported, host, join, BROKERS };
+  /** 연결 확인: 서버마다 붙어 보고(내가 보낸 메시지가 돌아오는 데까지) 결과를 돌려준다 */
+  async function probe(onEach) {
+    const list = urls();
+    const out = await Promise.all(list.map(async (b) => {
+      const t0 = Date.now();
+      try {
+        const c = await connect(b, null, 7000);
+        const topic = BASE + 'probe/' + rid(8);
+        const echo = await new Promise((res) => {
+          const t = setTimeout(() => res(false), 4000);
+          c.onMessage((tp) => { if (tp === topic) { clearTimeout(t); res(true); } });
+          c.sub(topic);
+          setTimeout(() => c.pub(topic, 'ping'), 150);
+        });
+        c.close();
+        const r = { name: b.name || b.url, ok: echo, ms: Date.now() - t0, note: echo ? '' : '붙었지만 메시지가 안 돌아옴' };
+        if (onEach) onEach(r);
+        return r;
+      } catch (e) {
+        const r = { name: b.name || b.url, ok: false, ms: Date.now() - t0, note: String((e && e.message) || e) === 'timeout' ? '시간 초과(막혔을 수 있음)' : '연결 거절·막힘' };
+        if (onEach) onEach(r);
+        return r;
+      }
+    }));
+    return out;
+  }
+
+  BB.Relay = { supported, host, join, probe, BROKERS };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>
@@ -11398,7 +11441,7 @@ body {
         <button class="play play--sm" type="button" data-vs="pjHost">방 만들기</button>
         <button class="btn btn--gold" type="button" data-vs="pjJoin">코드로 참가</button>
       </div>
-      <p class="hint-line">방을 만들면 4글자 코드가 나와요. 친구는 코드만 넣으면 돼요. 와이파이·휴대폰 데이터 어디서든 돼요.</p>` : ''}
+      <p class="hint-line">방을 만들면 4글자 코드가 나와요. 친구는 코드만 넣으면 돼요. 와이파이·휴대폰 데이터 어디서든 돼요. 잘 안 되면 <button class="linkbtn" type="button" data-vs="probe">연결 확인</button></p>` : ''}
       <details class="vs-more"${relayOk() && !/서버/.test(msg || '') ? '' : ' open'}><summary>서버 없이 연결(긴 코드)</summary>
         <div class="row2">
           <button class="btn" type="button" data-vs="p2pHost">초대하기</button>
@@ -11444,6 +11487,7 @@ body {
       ${o ? h2hLine(o.nick) : ''}
       ${V.mine.host ? `<button class="play" type="button" data-vs="start"${o ? '' : ' disabled'}>대결 시작</button>` : '<p class="hint-line">방장이 시작하면 바로 경기가 열려요.</p>'}
       ${V.mine.host && !o && V.room.relay ? inviteRow() : ''}
+      ${V.room.relay ? `<p class="hint-line vs-servers">중계 서버 ${V.room.servers().length}곳 연결</p>` : ''}
       ${V.mine.host && !o ? '<button class="btn btn--gold" type="button" data-vs="warmup">기다리는 동안 몸 풀기</button>' : ''}
       <button class="btn btn--ghost" type="button" data-vs="leave">방 나가기</button>`);
   }
@@ -11527,6 +11571,25 @@ body {
     P = null;
     if (!room) { lobby((err && !err.taken && err.message) || '방을 만들지 못했어요. 다시 해 주세요.'); return; }
     join(room, code, true, nick);
+  }
+  /** 연결 확인: 중계 서버마다 붙어 보고 ✓/✗ 를 보여 준다(사용자가 찍어 보내면 원인을 알 수 있게) */
+  async function probeView() {
+    const rows = BB.Relay.BROKERS.map((b) => ({ name: b.name, state: '확인 중…' }));
+    const draw = (done) => show(`<p class="card__eyebrow">친구와 대결 · 연결 확인</p>
+      <h2 class="card__title card__title--sm">중계 서버 연결</h2>
+      <ul class="vs-probe">${rows.map((r) => `<li class="${r.ok === true ? 'is-ok' : r.ok === false ? 'is-bad' : ''}"><b>${r.ok === true ? '✓' : r.ok === false ? '✗' : '…'}</b><span>${esc(r.name)}</span><em>${esc(r.state)}</em></li>`).join('')}</ul>
+      ${done ? `<p class="${okCount() ? 'vs-welcome' : 'rival-tag'}">${okCount() ? `${okCount()}곳 연결됨 · 대결할 수 있어요` : '모든 중계 서버에 닿지 않아요. 다른 와이파이나 휴대폰 데이터로 바꿔 보거나 "서버 없이 연결(긴 코드)"을 써 주세요.'}</p>
+      <p class="hint-line">${esc(navigator.userAgent.replace(/\s+/g, ' ').slice(0, 120))}</p>` : '<p class="hint-line">서버마다 붙어서 메시지가 돌아오는지 보는 중이에요(최대 10초).</p>'}
+      <button class="btn" type="button" data-vs="probe">다시 확인</button>
+      <button class="btn btn--ghost" type="button" data-vs="lobby">돌아가기</button>`);
+    const okCount = () => rows.filter((r) => r.ok).length;
+    draw(false);
+    await BB.Relay.probe((r) => {
+      const row = rows.find((x) => x.name === r.name);
+      if (row) { row.ok = r.ok; row.state = r.ok ? `${r.ms}ms` : r.note; }
+      if ($('viewVs') && !$('viewVs').hidden) draw(false);
+    });
+    draw(true);
   }
   async function pjJoin(codeIn) {
     const raw = codeIn != null ? codeIn : (($('vsCode4') || {}).value || '');
@@ -11906,6 +11969,8 @@ body {
     const act = b.dataset.vs;
     if (act === 'home') { cancelP2P(); G.home(); }
     else if (act === 'pjHost') pjHost();
+    else if (act === 'probe') probeView();
+    else if (act === 'lobby') lobby();
     else if (act === 'pjJoin') pjJoin();
     else if (act === 'p2pHost') p2pHost();
     else if (act === 'p2pAccept') p2pAccept();
