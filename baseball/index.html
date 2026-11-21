@@ -11020,7 +11020,7 @@ body {
   const COLORS = { host: '#c8102e', guest: '#1d3f8f' };
   const RELEASE = BB.Pitcher.releasePoint();
   const EMOTES = ['😂', '🔥', '😱', '👏', '🤫', '직구 간다!', '쳐 봐라!', '한 판 더?'];
-  const PITCH_CLOCK = 20000;                                // 투수가 이 안에 못 던지면 고른 대로(안 골랐으면 아무 공이나) 던진다
+  const PITCH_CLOCK = 10000;                                // 피치클락 10초: 이 안에 못 던지면 고른 대로(안 골랐으면 아무 공이나) 던진다
   const AWAY = '#8d939b';
   // 투구폼·타격폼(동작만 다르고 공을 놓는 시각·맞는 자리는 같다). 다리를 높이 들수록 도루 주기 쉽다
   const PFORMS = [
@@ -12031,7 +12031,10 @@ body {
           }
           const can = ses.canPitch();
           stealBtnSync(can ? null : g);
-          setStatus(can ? (V.stealN === g.n ? '🏃 주자 스타트!' : '공이 온다!') : V.stealN === g.n ? `🏃 도루 준비 · 다음 공에 ${stealFrom(g.bases)}루 주자가 뜁니다` : `🤔 ${nickOf(op)} 님이 고민 중…`);
+          // 타자 화면에도 투수의 피치클락(이 화면 기준으로 어림)
+          if (V.bClockN !== g.n || V.bClockId !== g.id) { V.bClockN = g.n; V.bClockId = g.id; V.bClockAt = now; }
+          const bl = Math.max(0, Math.ceil((PITCH_CLOCK - (now - V.bClockAt)) / 1000));
+          setStatus(can ? (V.stealN === g.n ? '🏃 주자 스타트!' : '공이 온다!') : V.stealN === g.n ? `🏃 도루 준비 · 다음 공에 ${stealFrom(g.bases)}루 주자가 뜁니다 · ⏱ ${bl}` : `🤔 ${nickOf(op)} 님이 고민 중… ⏱ ${bl}`);
           return;
         }
         stealBtnSync(null);
@@ -12049,7 +12052,9 @@ body {
         if (V.clockN !== g.n || V.clockId !== g.id) { V.clockN = g.n; V.clockId = g.id; V.clockAt = now; }
         const leftMs = PITCH_CLOCK - (now - V.clockAt);
         if (leftMs <= 0) { autoThrow(); return; }
-        setStatus(leftMs <= 10000 ? `⏱ ${Math.ceil(leftMs / 1000)}초 안에 던지세요` : '');
+        const secs = Math.ceil(leftMs / 1000);
+        setStatus(`⏱ ${secs}초 안에 던지세요`);
+        if (secs <= 3 && V.clockBeep !== secs) { V.clockBeep = secs; BB.Sfx.click(); }   // 마지막 3초는 똑딱
         if (!sel.type || !sel.cell) {
           meter.hidden = true;
           ses.tap = noTap;
