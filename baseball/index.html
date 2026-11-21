@@ -4491,12 +4491,12 @@ body {
     { name: '강릉고', short: '강릉고', color: '#1f3f6f' }, { name: '대전고', short: '대전고', color: '#6b3d1a' },
   ];
   const PRO_TEAMS = [
-    // 실제 KBO 구단 이름(팬 메이드 게임, 구단과 무관). 색은 대략의 팀 색
-    { name: 'LG 트윈스', short: 'LG', color: '#c30452' }, { name: 'SSG 랜더스', short: 'SSG', color: '#ce0e2d' },
-    { name: 'KT 위즈', short: 'KT', color: '#2b2b2b' }, { name: '한화 이글스', short: '한화', color: '#f05a19' },
-    { name: 'KIA 타이거즈', short: 'KIA', color: '#d6081a' }, { name: '삼성 라이온즈', short: '삼성', color: '#074ca1' },
-    { name: '롯데 자이언츠', short: '롯데', color: '#0b2a5b' }, { name: 'NC 다이노스', short: 'NC', color: '#315288' },
-    { name: '두산 베어스', short: '두산', color: '#131230' }, { name: '키움 히어로즈', short: '키움', color: '#820024' },
+    // 가상 구단: 연고 도시 + 별명(실제 구단·기업과 무관). abbr 는 중계 점수판의 작은 팀 표시
+    { name: '서울 트윈스', short: '트윈스', abbr: 'TW', color: '#c30452' }, { name: '인천 랜더스', short: '랜더스', abbr: 'LD', color: '#ce0e2d' },
+    { name: '수원 위즈', short: '위즈', abbr: 'WZ', color: '#2b2b2b' }, { name: '대전 이글스', short: '이글스', abbr: 'EG', color: '#f05a19' },
+    { name: '광주 타이거즈', short: '타이거즈', abbr: 'TG', color: '#d6081a' }, { name: '대구 라이온스', short: '라이온스', abbr: 'LI', color: '#074ca1' },
+    { name: '부산 자이언츠', short: '자이언츠', abbr: 'GI', color: '#0b2a5b' }, { name: '창원 다이노스', short: '다이노스', abbr: 'DN', color: '#315288' },
+    { name: '서울 베어스', short: '베어스', abbr: 'BE', color: '#131230' }, { name: '서울 히어로즈', short: '히어로즈', abbr: 'HE', color: '#820024' },
   ];
 
   // ── 능력치 → 판정 값 ────────────────────────────────────
@@ -5529,17 +5529,17 @@ body {
   const C = BB.Career;
   const { clamp } = BB;
 
-  // 가상의 메이저리그 구단(실제 구단과 무관)
+  // 메이저리그 구단(가상 이름)
   const MLB_TEAMS = [
-    // 실제 메이저리그 구단 이름(팬 메이드 게임, 구단과 무관)
-    { name: '뉴욕 양키스', short: '양키스', color: '#0c2340' }, { name: 'LA 다저스', short: '다저스', color: '#005a9c' },
-    { name: '시카고 컵스', short: '컵스', color: '#0e3386' }, { name: '보스턴 레드삭스', short: '레드삭스', color: '#bd3039' },
-    { name: '샌프란시스코 자이언츠', short: '자이언츠', color: '#e0561b' }, { name: '시애틀 매리너스', short: '매리너스', color: '#0c2c56' },
-    { name: '텍사스 레인저스', short: '레인저스', color: '#003278' }, { name: '애틀랜타 브레이브스', short: '브레이브스', color: '#ce1141' },
-    { name: '샌디에이고 파드리스', short: '파드리스', color: '#2f241d' }, { name: '뉴욕 메츠', short: '메츠', color: '#002d72' },
-    { name: '휴스턴 애스트로스', short: '애스트로스', color: '#eb6e1f' }, { name: '토론토 블루제이스', short: '블루제이스', color: '#134a8e' },
-    { name: '필라델피아 필리스', short: '필리스', color: '#e81828' }, { name: '탬파베이 레이스', short: '레이스', color: '#092c5c' },
-    { name: '디트로이트 타이거스', short: '타이거스', color: '#0c2340' }, { name: '피츠버그 파이리츠', short: '파이리츠', color: '#27251f' },
+    // 가상 메이저리그 구단: 도시 + 지어낸 별명(실제 구단과 무관)
+    { name: '뉴욕 엠파이어스', short: '엠파이어스', abbr: 'NE', color: '#0c2340' }, { name: '로스앤젤레스 스타즈', short: '스타즈', abbr: 'LS', color: '#005a9c' },
+    { name: '시카고 윈디스', short: '윈디스', abbr: 'CW', color: '#0e3386' }, { name: '보스턴 하버스', short: '하버스', abbr: 'BH', color: '#bd3039' },
+    { name: '샌프란시스코 포그', short: '포그', abbr: 'SF', color: '#e0561b' }, { name: '시애틀 파인스', short: '파인스', abbr: 'SP', color: '#0c2c56' },
+    { name: '텍사스 론스타즈', short: '론스타즈', abbr: 'TL', color: '#003278' }, { name: '애틀랜타 피치스', short: '피치스', abbr: 'AP', color: '#ce1141' },
+    { name: '샌디에이고 웨이브스', short: '웨이브스', abbr: 'SW', color: '#2f241d' }, { name: '뉴욕 코메츠', short: '코메츠', abbr: 'NC', color: '#002d72' },
+    { name: '휴스턴 오비터스', short: '오비터스', abbr: 'HO', color: '#eb6e1f' }, { name: '토론토 노스맨', short: '노스맨', abbr: 'TN', color: '#134a8e' },
+    { name: '필라델피아 리버티', short: '리버티', abbr: 'PL', color: '#e81828' }, { name: '탬파베이 걸프스', short: '걸프스', abbr: 'TG', color: '#092c5c' },
+    { name: '디트로이트 모터스', short: '모터스', abbr: 'DM', color: '#0c2340' }, { name: '피츠버그 스틸맨', short: '스틸맨', abbr: 'PS', color: '#27251f' },
   ];
   const USD_RATE = 1350;                                    // 1달러 = 1,350원
   const MLB_MIN = 9500;                                     // 최저 연봉(약 70만 달러), 만원
@@ -6702,7 +6702,7 @@ body {
 <script>
 /* 리그 생활: 일본 프로야구(NPB) 진출, 팀 순위와 포스트시즌, 국가대표, 라이벌, 통산 기록(마일스톤),
  * 명예의 전당 진행도, 그리고 더 다양한 이벤트(커리어 내내 기억하고, 앞의 선택이 뒤로 이어진다).
- * 실제 구단 이름은 팬 메이드 게임의 배경으로만 쓴다(구단과 무관).
+ * 구단 이름은 모두 가상의 이름이다(도시 + 별명, 실제 구단·기업과 무관).
  * career*.js·pitching*.js·luck.js 위에 덧붙인다. 화면과 무관한 순수 계산.
  */
 (function (global) {
@@ -6736,12 +6736,13 @@ body {
 
   // ── 일본 프로야구 ───────────────────────────────────────
   const NPB_TEAMS = [
-    { name: '요미우리 자이언츠', short: '요미우리', color: '#e86a10', league: 'C' }, { name: '한신 타이거스', short: '한신', color: '#222222', league: 'C' },
-    { name: '주니치 드래곤즈', short: '주니치', color: '#002569', league: 'C' }, { name: '히로시마 도요 카프', short: '히로시마', color: '#d4141c', league: 'C' },
-    { name: '도쿄 야쿠르트 스왈로스', short: '야쿠르트', color: '#0b3a7e', league: 'C' }, { name: '요코하마 DeNA 베이스타스', short: '요코하마', color: '#0055a5', league: 'C' },
-    { name: '후쿠오카 소프트뱅크 호크스', short: '소프트뱅크', color: '#c99a00', league: 'P' }, { name: '오릭스 버펄로스', short: '오릭스', color: '#0b1f3a', league: 'P' },
-    { name: '지바 롯데 마린스', short: '지바 롯데', color: '#1a1a1a', league: 'P' }, { name: '도호쿠 라쿠텐 골든이글스', short: '라쿠텐', color: '#860010', league: 'P' },
-    { name: '사이타마 세이부 라이온스', short: '세이부', color: '#1f366a', league: 'P' }, { name: '홋카이도 닛폰햄 파이터스', short: '닛폰햄', color: '#006298', league: 'P' },
+    // 가상 구단: 기업 이름을 뺀 도시 + 별명(실제 구단·기업과 무관)
+    { name: '도쿄 자이언츠', short: '도쿄G', abbr: 'TG', color: '#e86a10', league: 'C' }, { name: '오사카 타이거스', short: '오사카T', abbr: 'OT', color: '#222222', league: 'C' },
+    { name: '나고야 드래곤즈', short: '나고야', abbr: 'ND', color: '#002569', league: 'C' }, { name: '히로시마 카프', short: '히로시마', abbr: 'HC', color: '#d4141c', league: 'C' },
+    { name: '도쿄 스왈로스', short: '도쿄S', abbr: 'TS', color: '#0b3a7e', league: 'C' }, { name: '요코하마 베이스타스', short: '요코하마', abbr: 'YB', color: '#0055a5', league: 'C' },
+    { name: '후쿠오카 호크스', short: '후쿠오카', abbr: 'FH', color: '#c99a00', league: 'P' }, { name: '고베 버펄로스', short: '고베', abbr: 'KB', color: '#0b1f3a', league: 'P' },
+    { name: '지바 마린스', short: '지바', abbr: 'CM', color: '#1a1a1a', league: 'P' }, { name: '센다이 골든이글스', short: '센다이', abbr: 'SG', color: '#860010', league: 'P' },
+    { name: '사이타마 라이온스', short: '사이타마', abbr: 'SL', color: '#1f366a', league: 'P' }, { name: '홋카이도 파이터스', short: '홋카이도', abbr: 'HF', color: '#006298', league: 'P' },
   ];
   C.STAGES.npb = {
     name: 'NPB', label: 'NPB', D: 1.24, games: 143, pa: 560, defense: 1.05,
@@ -7176,11 +7177,34 @@ body {
     const i = OLD_PRO.indexOf(short);
     return i >= 0 ? C.PRO_TEAMS[i] : null;
   }
+  // 예전 저장본(실제 구단 이름) → 가상 구단 이름. 같은 순서라 자리끼리 짝짓는다
+  const REAL = {
+    pro: [['LG 트윈스', 'LG'], ['SSG 랜더스', 'SSG'], ['KT 위즈', 'KT'], ['한화 이글스', '한화'], ['KIA 타이거즈', 'KIA'], ['삼성 라이온즈', '삼성'], ['롯데 자이언츠', '롯데'], ['NC 다이노스', 'NC'], ['두산 베어스', '두산'], ['키움 히어로즈', '키움']],
+    mlb: [['뉴욕 양키스', '양키스'], ['LA 다저스', '다저스'], ['시카고 컵스', '컵스'], ['보스턴 레드삭스', '레드삭스'], ['샌프란시스코 자이언츠', '자이언츠'], ['시애틀 매리너스', '매리너스'], ['텍사스 레인저스', '레인저스'], ['애틀랜타 브레이브스', '브레이브스'], ['샌디에이고 파드리스', '파드리스'], ['뉴욕 메츠', '메츠'], ['휴스턴 애스트로스', '애스트로스'], ['토론토 블루제이스', '블루제이스'], ['필라델피아 필리스', '필리스'], ['탬파베이 레이스', '레이스'], ['디트로이트 타이거스', '타이거스'], ['피츠버그 파이리츠', '파이리츠']],
+    npb: [['요미우리 자이언츠', '요미우리'], ['한신 타이거스', '한신'], ['주니치 드래곤즈', '주니치'], ['히로시마 도요 카프', '히로시마'], ['도쿄 야쿠르트 스왈로스', '야쿠르트'], ['요코하마 DeNA 베이스타스', '요코하마'], ['후쿠오카 소프트뱅크 호크스', '소프트뱅크'], ['오릭스 버펄로스', '오릭스'], ['지바 롯데 마린스', '지바 롯데'], ['도호쿠 라쿠텐 골든이글스', '라쿠텐'], ['사이타마 세이부 라이온스', '세이부'], ['홋카이도 닛폰햄 파이터스', '닛폰햄']],
+  };
+  function toVirtual(x) {
+    const now = { pro: C.PRO_TEAMS, mlb: C.MLB_TEAMS, npb: NPB_TEAMS };
+    let s = JSON.stringify(x);
+    for (const k of Object.keys(REAL)) {
+      REAL[k].forEach(([name, short], i) => {
+        const t = now[k][i];
+        if (!t) return;
+        s = s.split(name).join(t.name);                                       // 글 속의 전체 이름까지
+        s = s.split(`"short":${JSON.stringify(short)}`).join(`"short":${JSON.stringify(t.short)}`);
+        s = s.split(`"team":${JSON.stringify(short)}`).join(`"team":${JSON.stringify(t.short)}`);
+      });
+    }
+    const y = JSON.parse(s);
+    for (const key of Object.keys(x)) delete x[key];
+    Object.assign(x, y);
+  }
   const baseEnsure = C.ensure;
   C.ensure = function ensure(p) {
     const q = baseEnsure(p);
     const x = q || p;
     if (!x) return q;
+    if (!x.teamsVirtual) { try { toVirtual(x); } catch (e) { /* 그대로 */ } x.teamsVirtual = true; }
     if (x.team && !x.teamsReal) {
       const t = remapTeam(x.team.short, x.stage);
       if (t) x.team = Object.assign({}, t);
@@ -9078,7 +9102,7 @@ body {
         ${C.keysOf(TY[firstType].stats).map((k, i) => `<label class="opt"><input type="radio" name="cLegacy" id="cLegacy-${k}" value="${k}"${i === 0 ? ' checked' : ''}><span><b>${C.nameOf(k)}</b></span></label>`).join('')}
       </fieldset>` : ''}
       <button class="play" type="button" data-act="create">고3 시즌 시작</button>
-      <p class="hint-line">실제 구단·학교 이름은 배경으로만 쓰며, 각 구단·리그와 관계없는 팬 메이드 게임입니다.</p>
+      <p class="hint-line">프로 구단 이름은 모두 가상의 이름(도시 + 별명)이며 실제 구단·리그와 관계없습니다.</p>
       <button class="btn btn--ghost btn--small" type="button" data-act="odds">확률 정보 보기</button>
       <div class="row-end">
         <button class="btn btn--ghost" type="button" data-act="title">처음 화면</button>
@@ -11645,7 +11669,7 @@ body {
     sbKey = key;
     const bat = battingKey(g);
     const pc = (k) => (g.pc && num(g.pc[k], 0, 999) ? g.pc[k] : 0);
-    const logo = (k) => { const t = teamOf(k); return t >= 0 ? C.PRO_TEAMS[t].short : (nickOf(k) || '?').slice(0, 1); };
+    const logo = (k) => { const t = teamOf(k); return t >= 0 ? C.PRO_TEAMS[t].abbr || C.PRO_TEAMS[t].short : (nickOf(k) || '?').slice(0, 1); };
     const row = (k) => `<div class="vs-sb__row${bat === k ? ' is-bat' : ''}" style="--tc:${colorOf(k)}">
         <span class="vs-sb__logo">${esc(logo(k))}</span><span class="vs-sb__name">${esc(nickOf(k))}</span>
         ${bat !== k ? `<span class="vs-sb__p" title="투구 수"><i>P</i>${pc(k)}</span>` : ''}
