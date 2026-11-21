@@ -11809,13 +11809,18 @@ body {
         const v = VG();
         if (!V || !v || v.over) return false;
         const o = other();
+        // 던져도 된다고 본 그 공·결과를 붙잡아 둔다: 공을 놓는 순간(makePitch)에는 상대가 잠깐 끊겨 있을 수 있다
         if (myRole() === 'bat') {
           const p = o && o.pitch;
           // 타자: 화면이 최신 상태를 따라잡은 뒤의 공만 친다
-          return !!(p && V.game && v.id === V.game.id && v.n === V.game.n && p.gid === v.id && p.n === v.n && p.n > V.played);
+          const ok = !!(p && V.game && v.id === V.game.id && v.n === V.game.n && p.gid === v.id && p.n === v.n && p.n > V.played);
+          if (ok) V.ready = { bat: true, p, res: null };
+          return ok;
         }
         const r = o && o.res;
-        return !!(V.myPitch && r && r.gid === V.myPitch.gid && r.n === V.myPitch.n && V.myPitch.n > V.replayed);
+        const ok = !!(V.myPitch && r && r.gid === V.myPitch.gid && r.n === V.myPitch.n && V.myPitch.n > V.replayed);
+        if (ok) V.ready = { bat: false, p: V.myPitch, res: r };
+        return ok;
       },
       frame(now, phase) {
         if (!V) return;
@@ -11879,9 +11884,12 @@ body {
         ses.tap = pitcherTap;
       },
       makePitch() {
-        const bat = myRole() === 'bat';
-        const p = bat ? other().pitch : V.myPitch;
-        const res = bat ? null : other().res;
+        const rd = V.ready || {};
+        const bat = rd.p ? rd.bat : myRole() === 'bat';
+        const o = other();
+        const p = rd.p || (bat ? o && o.pitch : V.myPitch);
+        const res = rd.p ? rd.res : (bat ? null : o && o.res);
+        V.ready = null;
         if (bat) V.played = p.n; else V.replayed = p.n;
         ses.bases = p.bases;
         ses.outs = p.outs;
