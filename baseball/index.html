@@ -11559,27 +11559,23 @@ body {
     if (t < 0) return key === 'host' ? '빨간 유니폼' : '파란 유니폼';
     return C.PRO_TEAMS[t].name + (key === 'guest' && teamOf('host') === t ? ' (원정)' : '');
   }
-  const FORM_KEY = 'ttak-vs-forms';
-  function savedForms() { try { const f = JSON.parse(localStorage.getItem(FORM_KEY) || '{}') || {}; return { bform: Number.isInteger(f.b) && BFORMS[f.b] ? f.b : 0 }; } catch (e) { return { bform: 0 }; } }
-  /** 키·투구폼·구종 6개는 방에 들어올 때마다 무작위(선수마다 다르다) */
+  /** 키·투구폼·타격폼·구종 6개는 방에 들어올 때마다 무작위(선수마다 다르다) */
   function randomPlayer() {
     const pool = POOL.slice();
     for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
-    return { hgt: HEIGHTS[Math.floor(Math.random() * HEIGHTS.length)], pform: Math.floor(Math.random() * PFORMS.length), ars: ['fast', ...pool.slice(0, ARS_N - 1)] };
+    return { hgt: HEIGHTS[Math.floor(Math.random() * HEIGHTS.length)], pform: Math.floor(Math.random() * PFORMS.length), bform: Math.floor(Math.random() * BFORMS.length), ars: ['fast', ...pool.slice(0, ARS_N - 1)] };
   }
   const myArs = () => (V && Array.isArray(V.mine.ars) && V.mine.ars.length ? V.mine.ars : DEF_ARS);
   function playerCard(label, pl) {
     if (!pl) return `<div class="vs-player"><p class="vs-player__head"><b>${label}</b><span>기다리는 중…</span></p></div>`;
     const ars = Array.isArray(pl.ars) && pl.ars.length ? pl.ars : DEF_ARS;
-    return `<div class="vs-player"><p class="vs-player__head"><b>${label}</b><span>키 ${pl.hgt || 178}cm · ${esc((PFORMS[pl.pform | 0] || PFORMS[1]).name)}</span></p>
+    return `<div class="vs-player"><p class="vs-player__head"><b>${label}</b><span>키 ${pl.hgt || 178}cm · ${esc((PFORMS[pl.pform | 0] || PFORMS[1]).name)} · ${esc((BFORMS[pl.bform | 0] || BFORMS[0]).name)}</span></p>
       <p class="vs-player__ars">${ars.map((t) => `<i>${C.pitchName(t)}</i>`).join('')}</p></div>`;
   }
   function formSelects() {
-    const bf = V.mine.bform | 0;
-    return `<p class="hint-line">키·투구폼·구종 6개는 무작위로 정해졌어요</p>
+    return `<p class="hint-line">키·투구폼·타격폼·구종 6개는 무작위로 정해졌어요</p>
       ${playerCard(`내 선수 · ${esc(V.mine.nick)}`, V.mine)}
-      ${playerCard(`상대 · ${esc((other() && other().nick) || '…')}`, other())}
-      <label class="field" for="vsBform"><span>내 타격폼</span><select id="vsBform" data-vsform="b">${BFORMS.map((f, i) => `<option value="${i}"${bf === i ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>`;
+      ${playerCard(`상대 · ${esc((other() && other().nick) || '…')}`, other())}`;
   }
   function teamSelect() {
     const t = V.mine.team != null ? V.mine.team : -1;
@@ -11889,7 +11885,7 @@ body {
     join(room, code, host, nick);
   }
   function join(room, code, host, nick, direct) {
-    V = { room, code, direct: !!direct, mine: Object.assign({ app: 'ttak-vs', v: 1, code, nick, host, team: savedTeam() }, savedForms(), randomPlayer()), other: null, game: null, running: false, lastGame: null };
+    V = { room, code, direct: !!direct, mine: Object.assign({ app: 'ttak-vs', v: 1, code, nick, host, team: savedTeam() }, randomPlayer()), other: null, game: null, running: false, lastGame: null };
     V.unsub = room.onPeers(() => onPeersChange(), () => { if (V) { setStatus('연결이 끊겼어요'); V.lost = true; } });
     pub({});
     renderRoom();
@@ -12410,16 +12406,6 @@ body {
     } else if (act === 'leave') leave();
   });
   view.addEventListener('change', (e) => {
-    const fsel = e.target.closest('[data-vsform]');
-    if (fsel && V) {
-      const v = +fsel.value;
-      const k = fsel.dataset.vsform;
-      if (k !== 'b') return;
-      pub({ bform: BFORMS[v] ? v : 0 });
-      try { localStorage.setItem(FORM_KEY, JSON.stringify({ b: V.mine.bform | 0 })); } catch (er) { /* 무시 */ }
-      BB.Sfx.click();
-      return;
-    }
     const sel2 = e.target.closest('[data-vsteam]');
     if (!sel2 || !V) return;
     const t = +sel2.value;
