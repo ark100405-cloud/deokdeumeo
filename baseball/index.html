@@ -2395,7 +2395,24 @@ body {
     return ballInHand(BB.solveFigure(pose(T_RELEASE, null, hand, style)), hand);
   }
 
-  BB.Pitcher = { ORIGIN, T_RELEASE, T_END, KEYS, pose, ballInHand, releasePoint };
+  // 투구폼 목록(대결·커리어 공용). steal: 다리를 높이 들수록 도루 주기 쉽다(대결 도루 확률에 더함)
+  const FORMS = [
+    { name: '정통 오버핸드', slot: 'over', kick: 1, set: 0.06, steal: 0 },
+    { name: '스리쿼터', slot: 'three', kick: 1, set: 0, steal: 0 },
+    { name: '사이드암', slot: 'side', kick: 0.9, set: -0.08, steal: 0.01 },
+    { name: '하이킥', slot: 'three', kick: 1.45, set: 0.12, steal: 0.04 },
+    { name: '2단 멈춤', slot: 'three', kick: 1.15, set: 0, pause: 1, steal: 0.02 },
+    { name: '퀵모션', slot: 'three', kick: 0.55, set: -0.05, pause: -0.6, steal: -0.06 },
+  ];
+  /** 투구폼에 따른 릴리스 지점(손·폼마다 한 번만 계산) */
+  const relCache = new Map();
+  function releaseFor(hand, style) {
+    const key = (hand === 'L' ? 'L' : 'R') + (style ? FORMS.indexOf(style) + ':' + (style.name || '') : '-');
+    if (!relCache.has(key)) relCache.set(key, releasePoint(hand === 'L' ? 'L' : undefined, style || undefined));
+    return relCache.get(key);
+  }
+
+  BB.Pitcher = { ORIGIN, T_RELEASE, T_END, KEYS, pose, ballInHand, releasePoint, releaseFor, FORMS };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>
@@ -2598,7 +2615,16 @@ body {
     return (BB.Tune && BB.Tune.hand === -1) ? mirror(st) : st;
   }
 
-  BB.Batter = { state: stateFor, STANCE };
+  // 타격폼 목록(대결·커리어 공용)
+  const FORMS = [
+    { name: '표준' },
+    { name: '오픈 스탠스', open: 0.14 },
+    { name: '크라우치', crouch: 0.07, waggle: 0.6 },
+    { name: '하이 핸즈', hands: 0.12, bat: 0.18, waggle: 1.3 },
+    { name: '레그킥', kick: 0.12, waggle: 1.5 },
+  ];
+
+  BB.Batter = { state: stateFor, STANCE, FORMS };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>
@@ -8159,7 +8185,8 @@ body {
     }
     const kmh = Math.round(rng.range(L.kmh[0], L.kmh[1]) * BB.PITCH_TYPES[type].speed);
     const wantStrike = first || rng() < L.strike;
-    return BB.makePitch({ type, kmh, release: RELEASE, target: chooseTarget(type, wantStrike), rng });
+    const style = S.session && S.session.pitcherStyle;
+    return BB.makePitch({ type, kmh, release: style ? BB.Pitcher.releaseFor('R', style) : RELEASE, target: chooseTarget(type, wantStrike), rng });
   }
 
   /** 도착 지점: 스트라이크면 존 안쪽, 볼이면 구종에 어울리는 쪽으로 살짝 빠지게 */
@@ -9136,6 +9163,7 @@ body {
       ${C.ensureLife(P).notes && C.ensureLife(P).notes.length ? `<div class="luck">${C.ensureLife(P).notes.slice(0, 3).map((n) => `<p class="luck__${n.kind === 'bad' ? 'bad' : 'good'}">${esc(n.text)}</p>`).join('')}</div>` : ''}
       ${statBars(P.stats, { effects: true, pot: P.potential })}
       ${isP(P) ? arsenal(P) : ''}
+      ${formPicker()}
       ${goalsHtml()}
       <p class="hint-line"><b>잠재력</b>(막대의 세로선과 "한계" 숫자): 훈련으로 쉽게 오를 수 있는 한계입니다. 넘어서도 훈련 효과의 30%는 오르고, 큰 활약을 한 시즌·각성·<b>한계 돌파 특훈</b>(개인 투자)으로 한계 자체가 올라갑니다.</p>
       ${steps}
@@ -9355,6 +9383,9 @@ body {
       const sit = mkSit(rng);
       const others = pool.filter((t) => t.name !== P.team.name);
       sit.opp = rng.pick(others);
+      // 상대 선수의 폼: 타자 커리어면 상대 투수의 투구폼, 투수 커리어면 상대 타자들의 타격폼 씨앗
+      sit.pform = Math.floor(rng() * BB.Pitcher.FORMS.length);
+      sit.bseed = 1 + Math.floor(rng() * 1e6);
       return { sit, result: null };
     });
     C.decorateKeys(P, P.keys, rng);                                   // 가끔 라이벌과 맞대결
@@ -9366,6 +9397,25 @@ body {
   }
   const batWord = () => (isP(P) ? '마운드에 오르기' : '타석에 서기');
 
+  function formPicker() {
+    const k = isP(P) ? 'p' : 'b';
+    const list = k === 'p' ? BB.Pitcher.FORMS : BB.Batter.FORMS;
+    const cur = myForm(k);
+    return `<label class="field" for="cForm"><span>내 ${k === 'p' ? '투구폼' : '타격폼'}(동작만 달라요)</span><select id="cForm" data-cform="${k}">${list.map((f, i) => `<option value="${i}"${cur === i ? ' selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>`;
+  }
+  /** 내 폼(처음이면 무작위로 정해 둔다): 'b' 타격폼, 'p' 투구폼 */
+  function myForm(kind) {
+    const key = kind === 'p' ? 'pform' : 'bform';
+    const list = kind === 'p' ? BB.Pitcher.FORMS : BB.Batter.FORMS;
+    if (!(Number.isInteger(P[key]) && list[P[key]])) { P[key] = Math.floor(Math.random() * list.length); save(); }
+    return P[key];
+  }
+  /** 상대 투수 투구폼(예전 저장본은 상대 팀 이름으로 정한다) */
+  const oppPform = (sit) => (Number.isInteger(sit.pform) && BB.Pitcher.FORMS[sit.pform] ? sit.pform : [...String(sit.opp && sit.opp.name)].reduce((a, c) => a + c.charCodeAt(0), sit.inning | 0) % BB.Pitcher.FORMS.length);
+  function formLine(sit) {
+    if (isP(P)) return `<p class="hint-line vs-formline">내 투구폼 <b>${esc(BB.Pitcher.FORMS[myForm('p')].name)}</b> · 상대 타자들은 저마다 다른 타격폼</p>`;
+    return `<p class="hint-line vs-formline">상대 투수 <b>${esc(BB.Pitcher.FORMS[oppPform(sit)].name)}</b> · 내 타격폼 <b>${esc(BB.Batter.FORMS[myForm('b')].name)}</b></p>`;
+  }
   function showKeyIntro() {
     const k = P.keys[P.keyIndex];
     const sit = k.sit;
@@ -9374,6 +9424,7 @@ body {
       <h2 class="card__title card__title--sm">${C.situationTitle(sit)}</h2>
       <div class="situ">${diamond(sit.bases)}${scoreLine(sit, sit.ours)}</div>
       <p class="card__lead">${C.situationGoal(sit)}</p>
+      ${formLine(sit)}
       ${sit.rival && P.rival ? `<p class="rival-tag">라이벌 대결! <b>${esc(sit.rival)}</b> (${esc(sit.opp.short)}) · 상대 전적 ${P.rival.meet ? C.rivalLine(P.rival, P) : '첫 대결'}</p>` : ''}
       ${!isP(P) ? '<p class="hint-line"><b>게스 히팅</b>: 공을 던지기 전에 네 칸으로 나눈 존에서 공이 올 칸을 누르세요. 맞히면 도착 위치와 볼·스트라이크가 보이고 치기 쉬워져요. 틀리면 조금 어려워지고, "예측 안 함"이면 그대로예요.</p>' : ''}
       ${isP(P) ? `<p class="hint-line">아웃 <b>${3 - sit.outs}개</b>를 잡으면 이닝 끝. 타자 5명을 상대하거나 4점을 주면 강판됩니다. 패드의 <b>빨간 칸</b>은 타자가 강한 곳, <b>파란 칸</b>은 약한 곳이에요.</p>` : ''}
@@ -9410,6 +9461,7 @@ body {
     return {
       level: sit.level || C.STAGES[P.stage].level, firstFast: 0, game: true, delay: 700, defense: C.STAGES[P.stage].defense || 1,
       pitcherLook: oppLook, fielderLook: Object.assign({}, oppLook, { number: '' }),
+      pitcherStyle: BB.Pitcher.FORMS[oppPform(sit)], batterStyle: BB.Batter.FORMS[myForm('b')],
       bases: sit.bases, outs: sit.outs, runnerS: P.stats.S,
       hint: P.firstAB ? '볼 4개면 볼넷, 스트라이크 3개면 삼진이에요' : '',
       statLabel: '결과',
@@ -9965,6 +10017,13 @@ body {
     else if (act === 'newPlayer') showCreate();
   });
   view.addEventListener('change', (e) => {
+    if (e.target.dataset && e.target.dataset.cform && P) {
+      const key = e.target.dataset.cform === 'p' ? 'pform' : 'bform';
+      const list = key === 'pform' ? BB.Pitcher.FORMS : BB.Batter.FORMS;
+      const v = +e.target.value;
+      if (list[v]) { P[key] = v; save(); BB.Sfx.click(); }
+      return;
+    }
     if (e.target.name === 'cPos') { showCreate(e.target.value, { name: $('cName').value, num: $('cNum').value, hs: $('cHs').value, pro: $('cPro').value }); return; }
     if (e.target.name === 'cType') {
       const TY = (view.querySelector('input[name="cPos"]:checked') || {}).value === 'P' ? C.PTYPES : C.TYPES;
@@ -10148,6 +10207,9 @@ body {
       st.sign = null;
       st.expect = C.fastKmh(P.stats.V);
       oppLook.number = bt.num;
+      // 상대 타자의 타격폼: 타자마다 다르게(같은 이름이면 같은 폼)
+      bt.bform = [...String(bt.name)].reduce((a, c) => a + c.charCodeAt(0), (sit && sit.bseed) | 0) % BB.Batter.FORMS.length;
+      if (ses) ses.batterStyle = BB.Batter.FORMS[bt.bform];
       if (ses) ses.runnerS = bt.q;
       // 타자 판정 값과 카메라(좌타·우타)
       BB.setTune(C.cpuTune(bt, P));
@@ -10228,6 +10290,8 @@ body {
       bases: sit ? sit.bases : 0, outs: sit ? sit.outs : 0, runnerS: st.batter.q,
       pitcherLook: mine, fielderLook: Object.assign({}, mine, { number: '' }), batterLook: oppLook, runnerLook: oppLook,
       pitcherHand: hand === 'L' ? 'L' : null,
+      pitcherStyle: BB.Pitcher.FORMS[Number.isInteger(P.pform) && BB.Pitcher.FORMS[P.pform] ? P.pform : (P.pform = Math.floor(Math.random() * BB.Pitcher.FORMS.length))],
+      batterStyle: BB.Batter.FORMS[st.batter && st.batter.bform | 0],
       hint: '',                                            // 패드와 미터가 직접 안내한다
       statLabel: '결과',
       hud: () => {
@@ -10291,7 +10355,7 @@ body {
         const bt = st.batter;
         // 타자 판정 값: 구종 숙련도·약점은 던지기 전에, 핫·콜드 존은 공이 지나갈 칸으로
         BB.setTune(C.batterTune(bt, P, st.type, { sign: followed, tired: f }));
-        const pitch = BB.makePitch({ type: st.type, kmh, release: REL[hand], target, rng, brkMul: C.pitchBrk(P, st.type) * (1 - f * 0.06), mirror: hand === 'L' });
+        const pitch = BB.makePitch({ type: st.type, kmh, release: BB.Pitcher.releaseFor(hand, ses.pitcherStyle), target, rng, brkMul: C.pitchBrk(P, st.type) * (1 - f * 0.06), mirror: hand === 'L' });
         BB.setTune(C.heatTune(BB.Tune, bt, C.cellOf(pitch.cross)));
         pitch.aimCell = [r, c];
         pitch.meterErr = err0;
@@ -11031,22 +11095,9 @@ body {
   const PITCH_CLOCK = 10000;                                // 피치클락 10초: 이 안에 못 던지면 고른 대로(안 골랐으면 아무 공이나) 던진다
   const AWAY = '#8d939b';
   // 투구폼·타격폼(동작만 다르고 공을 놓는 시각·맞는 자리는 같다). 다리를 높이 들수록 도루 주기 쉽다
-  const PFORMS = [
-    { name: '정통 오버핸드', slot: 'over', kick: 1, set: 0.06, steal: 0 },
-    { name: '스리쿼터', slot: 'three', kick: 1, set: 0, steal: 0 },
-    { name: '사이드암', slot: 'side', kick: 0.9, set: -0.08, steal: 0.01 },
-    { name: '하이킥', slot: 'three', kick: 1.45, set: 0.12, steal: 0.04 },
-    { name: '2단 멈춤', slot: 'three', kick: 1.15, set: 0, pause: 1, steal: 0.02 },
-    { name: '퀵모션', slot: 'three', kick: 0.55, set: -0.05, pause: -0.6, steal: -0.06 },
-  ];
-  const BFORMS = [
-    { name: '표준' },
-    { name: '오픈 스탠스', open: 0.14 },
-    { name: '크라우치', crouch: 0.07, waggle: 0.6 },
-    { name: '하이 핸즈', hands: 0.12, bat: 0.18, waggle: 1.3 },
-    { name: '레그킥', kick: 0.12, waggle: 1.5 },
-  ];
-  const RELEASES = PFORMS.map((f) => BB.Pitcher.releasePoint(undefined, f));
+  const PFORMS = BB.Pitcher.FORMS;
+  const BFORMS = BB.Batter.FORMS;
+  const RELEASES = PFORMS.map((f) => BB.Pitcher.releaseFor('R', f));
   // 도루 성공률: KBO·MLB 평균(2루 도루 약 76%, 3루 약 72%)을 바탕으로 구종·견제 횟수·투구폼으로 조금씩
   const STEAL_BASE = { 1: 0.76, 2: 0.72 };
   const STEAL_BY_TYPE = { fast: -0.05, slider: 0, change: 0.04, curve: 0.06, split: 0.04 };
