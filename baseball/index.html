@@ -950,6 +950,18 @@ body {
 .vs-abs b.is-b { color: #7fd0ff; }
 .vs-abs span { font-size: 11px; color: #c8cdd2; }
 @keyframes vsAbs { 0% { opacity: 0; transform: translateX(12px); } 10% { opacity: 1; transform: none; } 85% { opacity: 1; } 100% { opacity: 0; } }
+/* 좁은 화면(휴대폰 세로·아이패드 화면 나누기): 대결 점수판 아래로 구종·구속 판이 한 줄 내려오므로
+   상태 알약("고민 중…")과 ABS 트래킹을 그 아래로 내린다 */
+@media (max-width: 600px) {
+  .stage.is-vs .vs-status { top: calc(128px + env(safe-area-inset-top, 0px)); }
+  .stage.is-vs .vs-abs { top: calc(292px + env(safe-area-inset-top, 0px)); padding: 6px 8px 7px; }   /* 가운데 큰 판정 글자("스트라이크") 아래로 */
+  .stage.is-vs .vs-abs svg { width: 66px; height: 80px; }
+  .stage.is-vs .call { top: max(23%, calc(168px + env(safe-area-inset-top, 0px))); }   /* 상태 알약 아래에서 판정 글자 */
+}
+/* 가로 휴대폰 대결: 판정 글자를 상태 알약(86px) 아래로 */
+@media (max-height: 520px) {
+  .stage.is-vs .call { top: calc(126px + env(safe-area-inset-top, 0px)); }
+}
 </style>
 </head>
 <body>
