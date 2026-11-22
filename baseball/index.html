@@ -6607,9 +6607,9 @@ body {
     if (isP(p)) {
       const q = (s.V + s.M + s.L) / 3;
       const lead = sit.ours - sit.theirs;
-      if (rng() < clamp(0.55 + (q - 50) * 0.006 - (D - 1) * 0.5, 0.2, 0.85)) return { code: 'INN', ok: 1, runs: 0, label: '무실점으로 막았다 (자동)' };
+      if (rng() < clamp(0.55 + (q - 50) * 0.006 - (D - 1) * 0.5, 0.2, 0.85)) return { code: 'INN', ok: 1, runs: 0, label: '무실점으로 막았다 (자동)', bases: 0 };
       const runs = 1 + (rng() < 0.3 ? 1 : 0);
-      return { code: 'INN', ok: runs < lead ? 0.5 : 0, runs, swing: lead > 0 && lead - runs === 0 ? '동점 허용' : lead - runs < 0 ? '역전 허용' : '', label: `${runs}실점 (자동)` };
+      return { code: 'INN', ok: runs < lead ? 0.5 : 0, runs, swing: lead > 0 && lead - runs === 0 ? '동점 허용' : lead - runs < 0 ? '역전 허용' : '', label: `${runs}실점 (자동)`, bases: 0 };
     }
     const r = rng();
     const pBB = clamp(0.06 + (s.E - 50) * 0.002, 0.03, 0.14);
@@ -6624,7 +6624,7 @@ body {
     const play = { code, tField: 3, air: rng() < 0.5, carry: 60 };
     const a = C.advance(sit, code, { play, la: play.air ? 30 : 5 }, rng);
     const LABEL = { BB: '볼넷', HR: '홈런!', '2B': '2루타!', '3B': '3루타!', '1B': '안타!', K: '삼진', OUT: play.air ? '뜬공 아웃' : '땅볼 아웃' };
-    return { code, runs: a.runs, note: a.note, swing: a.swing, label: `${LABEL[code]} (자동)` };
+    return { code, runs: a.runs, note: a.note, swing: a.swing, label: `${LABEL[code]} (자동)`, bases: playBases(sit.bases, sit.outs, code, play, play.air ? 30 : 5, rng).bases };
   }
 
   Object.assign(C, {
@@ -9523,6 +9523,7 @@ body {
     const countText = () => `${b}볼 ${s}스트라이크`;
     const end = (r, call) => {
       result = Object.assign({ runs: 0 }, r);
+      if (result.bases == null) result.bases = C.playBases(sit.bases, sit.outs, r.code, null, null, rng).bases;   // 타석이 끝난 뒤 주자(결과 카드)
       if (r.code === 'BB') {
         const a = C.advance(sit, 'BB', null, rng);
         result.runs = a.runs;
@@ -9583,7 +9584,7 @@ body {
           cls: o.code === 'HR' ? call.cls : isHit ? (o.code === '1B' || o.code === 'IF1B' ? '' : 'is-gold') : 'is-dim',
         });
         if (a.runs > 0 && o.code !== 'HR') BB.Sfx.cheer(0.6);
-        return end({ code: o.code, label: o.label, runs: a.runs, note: a.note, swing: a.swing, dist: h.dist }, out);
+        return end({ code: o.code, label: o.label, runs: a.runs, note: a.note, swing: a.swing, dist: h.dist, bases: C.playBases(sit.bases, sit.outs, o.code, o, h.launch.la, rng).bases }, out);
       },
       done: () => !!result,
       onEnd: () => (onDone ? onDone(result) : finishKey(result)),
@@ -9624,7 +9625,7 @@ body {
     show(`
       <p class="card__eyebrow">승부처 ${P.keyIndex}/${P.keys.length} · ${verdict}</p>
       <h2 class="card__title card__title--sm">${esc(result.label)}</h2>
-      <div class="situ">${diamond(sit.bases)}${pit ? scoreLine(sit, sit.ours, sit.theirs + result.runs) : scoreLine(sit, sit.ours + result.runs)}</div>
+      <div class="situ">${diamond(result.bases != null ? result.bases : sit.bases)}${pit ? scoreLine(sit, sit.ours, sit.theirs + result.runs) : scoreLine(sit, sit.ours + result.runs)}</div>
       <p class="card__lead">${sub.length ? sub.join(' · ') : C.situationTitle(sit)}</p>
       ${rv ? `<p class="rival-tag">라이벌 ${esc(rv.name)} 상대 전적 ${C.rivalLine(rv, P)}</p>` : ''}
       ${inning}
@@ -10334,7 +10335,7 @@ body {
       const swing = before > 0 && after === 0 ? '동점 허용' : before >= 0 && after < 0 ? '역전 허용' : '';
       result = {
         code: 'INN', label, runs, ok, swing, pulled: end === 'pulled', K: inn.K, H: inn.H, BB: inn.BB, dp: inn.dp,
-        pc: inn.pc, outsGot: Math.min(3, inn.outs) - sit.outs, faced: inn.faced,
+        pc: inn.pc, outsGot: Math.min(3, inn.outs) - sit.outs, faced: inn.faced, bases: inn.outs >= 3 ? 0 : inn.bases,
       };
     }
     /** 한 타석이 끝났다: 주자·아웃을 바꾸고 다음 타자 또는 이닝 끝 */
