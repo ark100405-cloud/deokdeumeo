@@ -576,6 +576,7 @@ body {
 .note p.is-good { color: #2f8f4e; }
 .note p.is-bad { color: var(--accent); }
 [data-screen="after"] .hof__row .btn { padding: 6px 10px; font-size: 13px; }
+.hof__row.hof__row--2 { grid-template-columns: minmax(0, 1fr) auto; }   /* 순위 칸 없는 줄(자산 목록) */
 
 .situ { display: flex; align-items: center; gap: 16px; color: var(--card-ink); }
 .diamond { flex: none; }
@@ -11828,7 +11829,7 @@ body {
   // 자산 관리(현역 때와 같은 물건·규칙)
   function showShop(msg) {
     const L = C.ensureLife(A);
-    const own = L.assets.map((a, i) => { const it = C.LIFE_ITEM[a.id]; return `<li class="hof__row"><span class="hof__main"><b>${esc(it.name)}</b><i>시세 ${C.money(a.value)} · 산 값 ${C.money(a.paid)}</i></span><button class="btn btn--ghost" type="button" data-aft="sell" data-i="${i}">팔기</button></li>`; }).join('');
+    const own = L.assets.map((a, i) => { const it = C.LIFE_ITEM[a.id]; return `<li class="hof__row hof__row--2"><span class="hof__main"><b>${esc(it.name)}</b><i>시세 ${C.money(a.value)} · 산 값 ${C.money(a.paid)}</i></span><button class="btn btn--ghost" type="button" data-aft="sell" data-i="${i}">팔기</button></li>`; }).join('');
     const cats = Object.entries(C.LIFE_CATS).map(([k, n]) => `<button class="btn${shopCat === k ? '' : ' btn--ghost'}" type="button" data-aft="cat" data-id="${k}">${esc(n)}</button>`).join('');
     const items = C.LIFE_ITEMS.filter((it) => it.cat === shopCat).map((it) => {
       const why = C.cantBuyLife(A, it.id);
