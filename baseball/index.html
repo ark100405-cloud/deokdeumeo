@@ -568,6 +568,14 @@ body {
 .pick__head b { font-family: var(--font-display); font-weight: 400; font-size: 21px; }
 .pick__head span { font-size: 12px; font-weight: 600; color: var(--card-dim); font-variant-numeric: tabular-nums; }
 .pick__desc { font-size: 13px; color: var(--card-dim); }
+/* 은퇴 후 삶 */
+.pick:disabled { opacity: 0.5; cursor: not-allowed; }
+.pick:disabled:hover { box-shadow: none; }
+.pick__head i { font-style: normal; font-size: 12px; font-weight: 600; color: var(--card-dim); }
+.play--gold { background: var(--gold); color: #2b2008; box-shadow: 0 4px 0 #a07d1c; }
+.note p.is-good { color: #2f8f4e; }
+.note p.is-bad { color: var(--accent); }
+[data-screen="after"] .hof__row .btn { padding: 6px 10px; font-size: 13px; }
 
 .situ { display: flex; align-items: center; gap: 16px; color: var(--card-ink); }
 .diamond { flex: none; }
@@ -8441,8 +8449,999 @@ body {
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>
+/* 은퇴 후의 삶: 은퇴한 선수가 제2의 직업(지도자·해설위원·스카우트·아카데미·사업·방송인)을 골라
+ * 해마다 방향을 정하고, 이벤트에 답하고, 연말 결산을 받는다. 돈·집·차·가족은 현역 때 그대로 이어진다(life.js 재사용).
+ * 65세가 되거나 원할 때 끝나고, 칭호와 에필로그가 명예의 전당 기록에 남는다. 화면과 무관한 순수 계산. 금액 단위는 만원.
+ */
+(function (global) {
+  'use strict';
+  const BB = global.BB;
+  const C = BB.Career;
+  const { clamp } = BB;
+  const round100 = (v) => Math.round(v / 100) * 100;
+  const jong = (w) => { const c = w.charCodeAt(w.length - 1) - 0xac00; return c >= 0 && c <= 11171 ? c % 28 : 0; };
+  const iga = (w) => w + (jong(w) ? '이' : '가');
+  const eul = (w) => w + (jong(w) ? '을' : '를');
+  const ya = (w) => w + (jong(w) ? '이' : '');                // 이름 부를 때: 서준이, 하윤
+  const END_AGE = 65;
+
+  // ── 직업 ────────────────────────────────────────────────
+  const BIZ = {
+    meat: { name: '고깃집', cost: 5000, risk: 1 },
+    cafe: { name: '카페', cost: 10000, risk: 0.9 },
+    shop: { name: '스포츠 용품점', cost: 30000, risk: 0.8 },
+    dome: { name: '실내 야구장', cost: 100000, risk: 1.2 },
+  };
+  const JOBS = {
+    coach: { name: '지도자', icon: '🧢', desc: '2군 코치에서 시작해 감독·단장까지. 감독이 되면 해마다 팀 성적과 우승 도전', levels: ['2군 코치', '1군 코치', '수석코치', '감독', '단장'], pay: [8000, 12000, 18000, 30000, 40000] },
+    caster: { name: '해설위원', icon: '🎙', desc: '지역 방송에서 시작해 국민 해설위원까지. 인기가 높을수록 출연료가 많다', levels: ['지역 방송 해설', '케이블 해설위원', '공중파 메인 해설', '국민 해설위원'], pay: [5000, 12000, 25000, 45000] },
+    scout: { name: '스카우트', icon: '🔍', desc: '해마다 유망주 셋 중 하나를 추천한다. 몇 년 뒤 스타가 되면 명성이 오른다', levels: ['지역 스카우트', '스카우트 팀장', '단장'], pay: [8000, 15000, 40000] },
+    academy: { name: '야구 아카데미', icon: '🏫', desc: '레슨장을 열어 아이들을 가르친다. 제자가 프로에 가면 이름이 난다. 개업 1억', levels: ['동네 레슨장', '야구 아카데미', '전국 아카데미 체인'], pay: [0, 0, 0], cost: 10000 },
+    biz: { name: '사업', icon: '🏪', desc: '고깃집·카페·용품점·실내 야구장. 대박이면 프랜차이즈, 아니면 폐업. 5,000만부터', levels: ['1호점', '2호점', '프랜차이즈'], pay: [0, 0, 0], cost: 5000 },
+    media: { name: '방송인·유튜버', icon: '📺', desc: '채널을 열고 구독자를 모은다. 100만이면 예능 고정. 논란은 조심', levels: ['새내기 유튜버', '구독자 10만', '구독자 100만', '예능 고정 출연'], pay: [0, 0, 0, 0] },
+  };
+  const ACADEMY_CAP = [40, 150, 600];
+  const ACADEMY_RENT = [2000, 8000, 30000];
+  const ACADEMY_EXPAND = [50000, 200000];
+
+  /** 이 직업을 시작할 수 있는가: null 또는 이유 */
+  function cantStart(A, id) {
+    const J = JOBS[id];
+    if (!J) return '없는 직업';
+    if (A.job && A.job.id === id) return '지금 하는 일';
+    if (J.cost && A.money.cash < J.cost) return `돈이 모자란다(${C.money(J.cost)} 필요)`;
+    return null;
+  }
+  function startJob(A, id, rng) {
+    const why = cantStart(A, id);
+    if (why) return why;
+    if (A.job) A.jobs.push({ id: A.job.id, level: A.job.level, years: A.job.years });
+    const J = { id, level: 0, years: 0, rep: id === 'caster' ? Math.min(30, Math.round(A.fans / 4)) : id === 'coach' ? (A.grade === '전설' || A.grade === '명예의 전당' ? 15 : 5) : 5 };
+    if (id === 'academy') { A.money.cash -= JOBS.academy.cost; J.n = 8 + Math.round(A.fans / 10); J.drafted = 0; }
+    if (id === 'biz') { J.type = null; J.cap = 0; J.loss = 0; J.good = 0; }
+    if (id === 'media') { J.subs = 2000 + A.fans * 400; }
+    if (id === 'scout') { J.picks = []; J.stars = 0; }
+    if (id === 'coach') { J.str = 46 + Math.round(rng() * 8); J.build = 0; J.bad = 0; J.mgr = 0; J.champs = 0; }
+    A.job = J;
+    return null;
+  }
+  const levelName = (J) => (J ? JOBS[J.id].levels[J.level] : '무직');
+  const jobTitle = (J) => (J ? (J.id === 'biz' && J.type ? `${BIZ[J.type].name} ${levelName(J)}` : levelName(J)) : '쉬는 중');
+
+  /** 올해 고를 수 있는 방향(직업마다). 반환 [{id, label, desc}] */
+  function dirsFor(A) {
+    const J = A.job;
+    if (!J) return [];
+    if (J.id === 'coach') {
+      if (J.level < 3) return [
+        { id: 'grow', label: '유망주 육성', desc: '평판 천천히↑, 제자가 1군에 오를 수 있다' },
+        { id: 'tactic', label: '전술 연구', desc: '승진 기회↑, 조금 지친다' },
+        { id: 'talk', label: '선수들과 소통', desc: '인기↑, 팀 분위기↑' },
+      ];
+      if (J.level === 3) return [
+        { id: 'win', label: '올해 우승 도전', desc: '우승 확률↑, 꼴찌면 경질 위험↑' },
+        { id: 'rebuild', label: '리빌딩', desc: '올해 성적↓, 내년부터 전력↑, 경질 위험↓' },
+        { id: 'data', label: '데이터 야구', desc: '성적이 고르게, 큰 실패가 적다' },
+      ];
+      return [
+        { id: 'fa', label: 'FA 큰손', desc: '구단 돈으로 전력 크게↑, 실패하면 비판' },
+        { id: 'farm', label: '육성 시스템', desc: '해마다 전력이 조금씩 쌓인다' },
+        { id: 'global', label: '해외 스카우트', desc: '반반: 대박 외국인 또는 헛돈' },
+      ];
+    }
+    if (J.id === 'caster') return [
+      { id: 'analysis', label: '분석형 해설', desc: '평판↑, 승진이 빨라진다' },
+      { id: 'humor', label: '입담형 해설', desc: '인기↑↑, 말실수 논란 위험' },
+      { id: 'homer', label: '친정팀 응원형', desc: '친정 팬들 열광(인기↑), 편파 논란 위험' },
+    ];
+    if (J.id === 'scout') {
+      if (!A.offer || A.offer.year !== A.year) A.offer = { year: A.year, list: prospects(A) };
+      return A.offer.list.map((x, i) => ({ id: `p${i}`, label: `${x.name} (${x.school})`, desc: `성적 ${x.show} · 잠재력 ${'★'.repeat(x.stars)}${'☆'.repeat(5 - x.stars)} · ${x.trait}` }));
+    }
+    if (J.id === 'academy') {
+      const out = [
+        { id: 'elite', label: '엘리트반', desc: '수강료↑ 학생 수↓, 프로 지명이 많다' },
+        { id: 'mass', label: '대중반', desc: '학생 수↑↑, 수입이 안정적' },
+        { id: 'free', label: '무료 재능반', desc: '수입↓, 인기·가족 행복↑, 숨은 재능 발굴' },
+      ];
+      if (J.level < 2 && J.n >= ACADEMY_CAP[J.level] * 0.85) out.push({ id: 'expand', label: `확장한다 (${C.money(ACADEMY_EXPAND[J.level])})`, desc: '다음 단계로 커진다. 학생 정원이 크게 는다', off: A.money.cash < ACADEMY_EXPAND[J.level] ? '돈이 모자란다' : null });
+      return out;
+    }
+    if (J.id === 'biz') {
+      if (!J.type) return Object.entries(BIZ).map(([k, b]) => ({ id: `t_${k}`, off: A.money.cash < b.cost ? '돈이 모자란다' : null, label: `${b.name} 열기 (${C.money(b.cost)})`, desc: k === 'meat' ? '작게 시작, 손님은 인기에 따라' : k === 'cafe' ? '안정적, 큰 대박은 드물다' : k === 'shop' ? '야구 인기를 타면 크게 번다' : '가장 비싸고 위험, 대박이면 프랜차이즈' }));
+      return [
+        { id: 'grow', label: `확장 투자 (${C.money(Math.round(J.cap * 0.5 / 100) * 100)})`, desc: '규모가 커진다. 불황이면 손해도 크다', off: A.money.cash < round100(J.cap * 0.5) ? '돈이 모자란다' : null },
+        { id: 'keep', label: '그대로 운영', desc: '안정적으로' },
+        { id: 'close', label: '가게를 정리한다', desc: '지금 가치로 팔고 사업을 접는다' },
+      ];
+    }
+    if (J.id === 'media') {
+      const out = [
+        { id: 'analysis', label: '야구 분석 콘텐츠', desc: '꾸준히 오른다, 평판↑' },
+        { id: 'daily', label: '먹방·일상', desc: '대박 아니면 쪽박' },
+        { id: 'legend', label: '레전드 토크', desc: '현역 때 인기만큼 구독자가 몰린다' },
+      ];
+      if (A.life.family.kids.length) out.push({ id: 'kids', label: '아이와 함께', desc: '가족 행복↑, 구독자 보통' });
+      return out;
+    }
+    return [];
+  }
+
+  // 스카우트: 유망주 셋
+  const P_NAMES = ['김', '이', '박', '최', '정', '강', '조', '윤', '장', '임'];
+  const P_GIVEN = ['도현', '민재', '태양', '지훈', '건호', '우진', '시후', '현우', '준서', '하람', '은찬', '선우'];
+  const SCHOOLS = ['광천고', '서해고', '동산고', '남강고', '북악고', '청림고', '해솔고', '금성고'];
+  const TRAITS = [['성실함', 0.12], ['승부욕', 0.06], ['자유로운 영혼', -0.06], ['조용한 노력파', 0.1], ['스타 기질', 0.02]];
+  function prospects(A) {
+    const r = BB.makeRng(((A.year + 1) * 7919 + A.num * 31 + (A.name || '').length) >>> 0);
+    return [0, 1, 2].map(() => {
+      const pot = r();                                        // 진짜 잠재력(숨김)
+      const t = r.pick(TRAITS);
+      const shown = clamp(pot + (r() - 0.5) * 0.5, 0, 1);    // 성적은 진짜와 어긋난다
+      const stars = clamp(Math.round((pot + (r() - 0.5) * 0.45) * 5), 1, 5);
+      return { name: r.pick(P_NAMES) + r.pick(P_GIVEN), school: r.pick(SCHOOLS), show: shown >= 0.8 ? 'A' : shown >= 0.6 ? 'B' : shown >= 0.4 ? 'C' : 'D', stars, trait: t[0], val: clamp(pot + t[1], 0, 1) };
+    });
+  }
+
+  // ── 시작 ────────────────────────────────────────────────
+  /** 은퇴 직전 선수(p)와 은퇴 기록(rec)으로 은퇴 후 삶을 만든다 */
+  function startAfter(p, rec) {
+    const life = JSON.parse(JSON.stringify(C.ensureLife(p)));
+    const top = (p.history || []).filter((h) => ['kbo', 'npb', 'mlb'].includes(h.stage));
+    const home = top.length ? top[top.length - 1].team : (p.team && p.team.short) || '';
+    return {
+      v: 1, recId: rec.id, name: p.name, num: p.num, pos: p.pos === 'P' ? 'P' : 'B', grade: rec.grade, score: rec.score, numberRetired: !!rec.number,
+      retiredAge: rec.age, age: rec.age, year: 0, season: 0, team: home,
+      fans: Math.max(0, p.fans || 0), money: { cash: Math.max(0, p.money ? p.money.cash : 0), earned: 0, salary: 0 }, life, condition: 70,
+      health: clamp(Math.round(96 - Math.max(0, rec.age - 30) * 1.2), 60, 96),
+      foundation: !!p.foundation, fanKid: (p.eventsSeen || []).includes('fan_letter2'),
+      job: null, jobs: [], offer: null, stats: { champs: 0, pennants: 0, pupils: 0, stars: 0, natCoach: false, hof: false, bizPeak: 0, peakSubs: 0, grandkids: 0, books: 0 },
+      evSeen: [], evHist: {}, queue: [], log: [], phase: 'job', plan: null, evLeft: 0, event: null, last: null, done: false, ending: null,
+    };
+  }
+
+  // ── 한 해 ───────────────────────────────────────────────
+  /** 새해: 방향을 고르고 이벤트 1~2개를 겪는다 */
+  function newYear(A, rng) {
+    A.year++;
+    A.season = A.year;
+    A.plan = null;
+    A.evLeft = 1 + (rng() < 0.55 ? 1 : 0);
+    A.yearNotes = [];
+    A.phase = A.job ? 'plan' : 'job';
+  }
+  function setPlan(A, dir, rng) {
+    const J = A.job;
+    const notes = [];
+    if (J && J.id === 'biz' && dir.startsWith('t_')) {
+      const k = dir.slice(2);
+      const b = BIZ[k];
+      if (!b || A.money.cash < b.cost) return '돈이 모자란다';
+      A.money.cash -= b.cost;
+      J.type = k; J.cap = b.cost;
+      notes.push(`${eul(b.name)} 열었다. ${A.team ? `벽에는 ${A.team} 시절 유니폼을 걸었다.` : ''}`);
+      dir = 'keep';
+    }
+    if (J && J.id === 'biz' && dir === 'grow') {
+      const add = round100(J.cap * 0.5);
+      if (A.money.cash < add) return '돈이 모자란다';
+      A.money.cash -= add; J.cap += add;
+      notes.push(`${C.money(add)}을 더 투자했다.`);
+    }
+    if (J && J.id === 'academy' && dir === 'expand') {
+      const cost = ACADEMY_EXPAND[J.level];
+      if (J.level >= 2 || A.money.cash < cost) return '돈이 모자란다';
+      A.money.cash -= cost; J.level++;
+      notes.push(`${JOBS.academy.levels[J.level]}로 커졌다.`);
+      dir = 'mass';
+    }
+    if (J && J.id === 'biz' && dir === 'close') {
+      const v = round100(J.cap * (0.7 + rng() * 0.3));
+      A.money.cash += v;
+      notes.push(`${BIZ[J.type] ? BIZ[J.type].name : '가게'}를 ${C.money(v)}에 정리했다.`);
+      A.jobs.push({ id: J.id, level: J.level, years: J.years, type: J.type });
+      A.job = null;
+    }
+    if (!A.job && dir === 'rest') {
+      A.health = clamp(A.health + 5, 0, 100);
+      A.life.family.happy = clamp(A.life.family.happy + 5, 0, 100);
+      notes.push('한 해 푹 쉬며 가족과 시간을 보냈다.');
+    }
+    A.plan = dir;
+    A.planNotes = notes;
+    A.phase = A.evLeft > 0 ? 'event' : 'review';
+    return null;
+  }
+
+  // ── 연말 결산 ───────────────────────────────────────────
+  function jobYear(A, rng) {
+    const J = A.job;
+    const R = { income: 0, notes: [], up: false, end: false };
+    if (!J) return R;
+    J.years++;
+    const rep0 = J.rep;
+    const dir = A.plan;
+    const g = () => rng.gauss();
+    const rep = (v) => { J.rep = clamp(Math.round(J.rep + v), 0, 100); };
+    if (J.id === 'coach') {
+      if (J.level < 3) {
+        rep(5 + (dir === 'tactic' ? 6 : dir === 'grow' ? 3 : 2) + g() * 3);
+        if (dir === 'grow' && rng() < 0.35) { A.stats.pupils++; R.notes.push('지도한 유망주가 1군 무대를 밟았다.'); }
+        if (dir === 'talk') { A.fans += 2; R.notes.push('선수들이 "코치님 덕분"이라며 인터뷰에서 이름을 불렀다.'); }
+        if (dir === 'tactic') A.health = clamp(A.health - 2, 0, 100);
+        const need = [22, 45, 68][J.level];
+        if (J.rep >= need && rng() < 0.65) { J.level++; R.up = true; R.notes.push(`${JOBS.coach.levels[J.level]}로 승진했다!`); if (J.level === 3) J.mgr = 0; }
+      } else if (J.level === 3) {
+        J.mgr++;
+        J.str = clamp(J.str + g() * 2, 40, 60);              // 해마다 선수단이 조금씩 바뀐다
+        let str = J.str + J.build;
+        let sd = 6;
+        if (dir === 'win') { str += 7; sd = 8; }
+        if (dir === 'rebuild') { str -= 6; J.build += 4; }
+        if (dir === 'data') sd = 3.5;
+        str += J.rep * 0.03;
+        const rank = clamp(Math.round(6 - (str - 53 + g() * sd) / 3.4), 1, 10);
+        const post = rank <= 5;
+        const pc = rank === 1 ? 0.14 : rank <= 3 ? 0.05 : rank <= 5 ? 0.01 : 0;
+        const champ = post && rng() < pc + (dir === 'win' ? 0.03 : 0);
+        R.rank = rank;
+        R.notes.push(`정규시즌 ${rank}위${post ? ' · 포스트시즌 진출' : ''}`);
+        if (champ) { A.stats.champs++; J.champs++; A.fans += 10; R.income += 20000; rep(15); R.notes.push('🏆 한국시리즈 우승! 헹가래를 받았다. 우승 보너스 2억'); }
+        else if (rank === 1) { A.stats.pennants++; rep(8); R.notes.push('정규시즌 1위. 아쉽게 우승은 놓쳤다.'); }
+        else if (post) rep(3);
+        else rep(rank >= 9 ? -10 : -3);
+        J.bad = rank >= 8 ? J.bad + 1 : 0;
+        if (J.bad >= 3 || (dir === 'win' && rank >= 9 && rng() < 0.45)) {
+          R.end = true; R.notes.push('성적 부진으로 경질됐다. 마지막 인사를 하고 구단을 떠났다.');
+          rep(-10);
+        } else if (J.mgr >= 4 && J.champs >= 1 && J.rep >= 75 && rng() < 0.35) {
+          J.level = 4; R.up = true; R.notes.push('구단이 단장을 맡아 달라고 했다. 이제 프런트의 수장이다.');
+        }
+        J.build = Math.round(J.build * 0.7 * 10) / 10;       // 리빌딩 효과는 몇 년에 걸쳐 사라진다
+      } else {
+        let str = J.str + J.build;
+        if (dir === 'fa') { str += 8; if (rng() < 0.3) { rep(-6); R.notes.push('비싼 FA가 부진했다. "돈만 썼다"는 비판이 나왔다.'); } }
+        if (dir === 'farm') J.build += 3;
+        J.build = Math.round(J.build * 0.75 * 10) / 10;
+        if (dir === 'global') { if (rng() < 0.5) { str += 10; R.notes.push('데려온 외국인 선수가 MVP급 활약을 했다!'); } else R.notes.push('외국인 선수가 시즌 초에 짐을 쌌다.'); }
+        const rank = clamp(Math.round(6 - (str - 53 + g() * 6) / 3.4), 1, 10);
+        R.rank = rank;
+        R.notes.push(`우리 팀 정규시즌 ${rank}위`);
+        if (rank <= 2 && rng() < 0.12) { A.stats.champs++; A.fans += 6; rep(10); R.notes.push('🏆 내가 만든 팀이 우승했다!'); }
+        rep(rank <= 4 ? 4 : rank >= 8 ? -5 : 0);
+      }
+      R.income += JOBS.coach.pay[J.level];
+    } else if (J.id === 'caster') {
+      const base = JOBS.caster.pay[J.level];
+      if (dir === 'analysis') rep(5 + g() * 3);
+      if (dir === 'humor') { A.fans += 5; rep(2); if (rng() < 0.22) { A.fans = Math.max(0, A.fans - 9); rep(-6); R.notes.push('생방송 농담이 선을 넘었다는 비판을 받았다.'); } else R.notes.push('입담이 화제가 돼 클립 조회수가 폭발했다.'); }
+      if (dir === 'homer') { A.fans += 4; rep(1); if (rng() < 0.18) { rep(-7); R.notes.push(`${A.team || '친정팀'} 편파 해설 논란이 일었다.`); } else R.notes.push(`${A.team || '친정팀'} 팬들이 "우리 해설"이라며 반겼다.`); }
+      const need = [30, 62, 94][J.level];
+      if (need != null && J.rep >= need && rng() < 0.4) { J.level++; R.up = true; R.notes.push(`${JOBS.caster.levels[J.level]}로 올라섰다!`); }
+      if (J.rep >= 70 && rng() < 0.3) R.notes.push('올해의 명해설로 뽑혔다.');
+      R.income += base + Math.min(100, A.fans) * 25 * (J.level + 1);
+    } else if (J.id === 'scout') {
+      const k = dir && dir[0] === 'p' ? +dir.slice(1) : 0;
+      const x = A.offer && A.offer.list[k];
+      if (x) { J.picks.push({ name: x.name, at: A.year, val: x.val }); R.notes.push(`${x.name}(${x.school})를 1순위로 추천했다.`); }
+      for (const pk of J.picks) {
+        if (pk.done || A.year - pk.at < 3) continue;
+        pk.done = true;
+        const v = pk.val + (rng() - 0.5) * 0.15;
+        if (v >= 0.92) { J.stars++; A.stats.stars++; A.fans += 3; rep(15); R.notes.push(`⭐ ${pk.name}가 리그 정상급 스타가 됐다! "내 눈이 맞았다."`); }
+        else if (v >= 0.5) { rep(5); R.notes.push(`${pk.name}가 1군 주전 자리를 잡았다.`); }
+        else { rep(-5); R.notes.push(`${pk.name}는 끝내 1군에 자리 잡지 못했다.`); }
+      }
+      const need = [35, 70][J.level];
+      if (need != null && J.rep >= need && rng() < 0.55) { J.level++; R.up = true; R.notes.push(`${JOBS.scout.levels[J.level]}로 올라섰다!`); }
+      R.income += JOBS.scout.pay[J.level];
+    } else if (J.id === 'academy') {
+      const cap = ACADEMY_CAP[J.level];
+      const fee = dir === 'elite' ? 250 : dir === 'free' ? 0 : 100;
+      const grow = dir === 'elite' ? 3 + rng() * 6 : dir === 'free' ? 8 + rng() * 8 : 10 + rng() * 25 + A.fans * 0.15;
+      J.n = clamp(Math.round(J.n * (dir === 'elite' ? 0.95 : 1) + grow * (1 + J.level * 1.5)), 5, cap);
+      const income = J.n * fee - ACADEMY_RENT[J.level];
+      R.income += income;
+      if (dir === 'free') { C.ensureLife(A).family.happy = clamp(A.life.family.happy + 4, 0, 100); A.fans += 3; R.notes.push('형편이 어려운 아이들이 무료로 야구를 배웠다.'); }
+      const pc = (dir === 'elite' ? 0.3 : dir === 'free' ? 0.18 : 0.1) * (1 + J.level * 0.4);
+      const n = (rng() < pc ? 1 : 0) + (rng() < pc * 0.4 ? 1 : 0);
+      if (n) { J.drafted += n; A.stats.pupils += n; A.fans += 2 * n; R.notes.push(`🎓 제자 ${n}명이 프로 지명을 받았다!`); }
+      R.notes.push(`학생 ${J.n}명 · 순수익 ${income >= 0 ? '' : '−'}${C.money(Math.abs(income))}`);
+      if (J.level < 2 && J.n >= cap * 0.85) R.notes.push('자리가 꽉 찼다. 내년 계획에서 확장할 수 있다.');
+    } else if (J.id === 'biz') {
+      if (J.type) {
+        const b = BIZ[J.type];
+        const econ = rng();
+        const ek = econ < 0.22 ? 'bust' : econ > 0.8 ? 'boom' : 'norm';
+        const rate = ({ bust: -0.16, norm: 0.1, boom: 0.32 })[ek] * b.risk + Math.min(100, A.fans) * 0.0015 + g() * 0.08;
+        const profit = round100(J.cap * rate);
+        R.income += profit;
+        R.notes.push(`${ek === 'boom' ? '호황' : ek === 'bust' ? '불황' : '보통'} · ${b.name} ${profit >= 0 ? '순이익' : '적자'} ${C.money(Math.abs(profit))}`);
+        if (profit < 0) J.loss += -profit; else { J.loss = Math.max(0, J.loss - profit * 0.5); J.good++; }
+        A.stats.bizPeak = Math.max(A.stats.bizPeak, J.cap);
+        if (J.level < 2 && J.cap >= b.cost * (J.level ? 4 : 2) && J.good >= 2 && rng() < 0.5) { J.level++; R.up = true; R.notes.push(J.level === 2 ? '🎉 프랜차이즈가 됐다! 전국에 간판이 걸린다.' : '2호점을 열었다!'); if (J.level === 2) J.cap = round100(J.cap * 1.5); }
+        if (J.loss > J.cap * 0.8) { R.end = true; R.notes.push('적자가 쌓여 결국 문을 닫았다.'); A.life.family.happy = clamp(A.life.family.happy - 8, 0, 100); }
+      }
+    } else if (J.id === 'media') {
+      const f = Math.min(100, A.fans);
+      let mul = dir === 'analysis' ? 1.1 + rng() * 0.08 : dir === 'daily' ? (rng() < 0.3 ? 1.55 : 0.95) : dir === 'legend' ? 1.02 + f / 500 : 1.1;
+      mul = 1 + (mul - 1) * Math.max(0, 1 - J.subs / 2500000);  // 커질수록 더디게 는다(최대 250만쯤)
+      if (dir === 'analysis') rep(5);
+      if (dir === 'kids') A.life.family.happy = clamp(A.life.family.happy + 6, 0, 100);
+      if (rng() < 0.1) { mul *= 0.7; A.fans = Math.max(0, A.fans - 6); R.notes.push('예전 발언이 다시 퍼져 구독 취소가 이어졌다.'); }
+      J.subs = Math.round(J.subs * mul + f * 120 * Math.max(0, 1 - J.subs / 2500000));
+      A.stats.peakSubs = Math.max(A.stats.peakSubs, J.subs);
+      const lv = J.subs >= 1500000 && J.rep >= 30 ? 3 : J.subs >= 1e6 ? 2 : J.subs >= 1e5 ? 1 : 0;
+      if (lv > J.level) { J.level = lv; R.up = true; R.notes.push(lv === 3 ? '📺 예능 고정 출연이 확정됐다!' : `🎉 ${JOBS.media.levels[lv]} 달성!`); }
+      R.income += round100(J.subs / 10000 * 120 + (J.level >= 3 ? 20000 : 0));
+      R.notes.push(`구독자 ${J.subs.toLocaleString('ko-KR')}명`);
+    }
+    if (J.rep !== rep0) R.rep = J.rep - rep0;
+    R.title = jobTitle(J);
+    return R;
+  }
+
+  // 자녀: 해마다 나이를 먹고, 야구하는 아이는 실력이 는다. 18세에 프로 지명 결과
+  function kidsYear(A, rng) {
+    const notes = [];
+    const F = A.life.family;
+    for (const k of F.kids) {
+      if (k.baseball && k.age <= 18) {
+        if (k.skill == null) k.skill = 38 + Math.round(rng() * 14);
+        k.skill = clamp(k.skill + 2 + rng() * 4 + (k.coach === 'me' ? 2 : k.coach === 'pro' ? 1.5 : 0), 0, 100);
+        if (k.age === 13) notes.push(`${ya(k.name)}가 중학교 야구부에 들어갔다.`);
+        if (k.age === 16) notes.push(`${ya(k.name)}가 고교 야구부 주전 경쟁을 시작했다.`);
+        if (k.age === 18 && !k.draft) {
+          k.draft = k.skill >= 72 ? '1라운드' : k.skill >= 60 ? '하위 라운드' : '대학 진학';
+          if (k.draft !== '대학 진학') {
+            notes.push(`⚾ ${ya(k.name)}가 프로 ${k.draft} 지명을 받았다! 다음 선수로 야구인 2세를 고를 수 있다.`);
+            A.heir = { father: A.name, child: k.name, num: A.num, grade: A.grade };
+          } else notes.push(`${ya(k.name)}는 대학에서 야구를 이어 가기로 했다.`);
+        }
+      }
+    }
+    return notes;
+  }
+
+  /** 연말: 직업·자산·가족·건강을 정리하고 한 살 먹는다 */
+  function endYear(A, rng) {
+    const R = jobYear(A, rng);
+    A.money.cash += R.income;
+    A.money.earned += Math.max(0, R.income);
+    A.money.salary = R.income;
+    if (A.money.cash < 0) A.money.cash = 0;
+    if (R.end && A.job) { A.jobs.push({ id: A.job.id, level: A.job.level, years: A.job.years, type: A.job.type }); A.job = null; }
+    // 자산·생활비·가족(현역 때와 같은 규칙)
+    const life = C.lifeSeason(A, rng);
+    const kids = kidsYear(A, rng);
+    // 건강: 나이가 들수록 조금씩
+    const dh = A.age >= 60 ? -3 : A.age >= 50 ? -2 : A.age >= 40 ? -1 : 0;
+    A.health = clamp(A.health + dh + (A.healthPlan ? 1 : 0), 0, 100);
+    A.age++;
+    A.fans = Math.max(0, Math.round(A.fans * 0.97));          // 은퇴 뒤에는 인기가 천천히 식는다
+    const review = { year: A.year, age: A.age, job: R, life, kids, net: netOf(A), cash: A.money.cash, notes: (A.planNotes || []).concat(A.yearNotes || []) };
+    A.last = review;
+    A.log.push({ year: A.year, age: A.age, job: A.job ? jobTitle(A.job) : '쉬는 중', income: R.income, net: review.net, line: R.notes[0] || '' });
+    if (A.log.length > 60) A.log.shift();
+    A.phase = A.age >= END_AGE || A.health <= 10 ? 'end' : 'review';
+    if (A.phase === 'end') A.ending = finish(A, A.age < END_AGE);
+    return review;
+  }
+  const netOf = (A) => C.netWorth(A);
+
+  // ── 이벤트 ──────────────────────────────────────────────
+  const cash = (A, o, v) => { A.money.cash = Math.max(0, A.money.cash + v); o.cash = (o.cash || 0) + v; };
+  const fans = (A, o, v) => { A.fans = Math.max(0, A.fans + v); o.fans = (o.fans || 0) + v; };
+  const happy = (A, o, v) => { const F = A.life.family; const b = F.happy; F.happy = clamp(b + v, 0, 100); o.happy = (o.happy || 0) + (F.happy - b); };
+  const health = (A, o, v) => { const b = A.health; A.health = clamp(b + v, 0, 100); o.health = (o.health || 0) + (A.health - b); };
+  const rep = (A, o, v) => { if (!A.job) return; const b = A.job.rep; A.job.rep = clamp(b + v, 0, 100); o.rep = (o.rep || 0) + (A.job.rep - b); };
+  const kidOf = (A, f) => A.life.family.kids.find(f);
+  const hasKids = (A) => A.life.family.kids.length > 0;
+  const great = (A) => A.grade === '전설' || A.grade === '명예의 전당';
+  const isJob = (id) => (A) => !!A.job && A.job.id === id;
+
+  const EVENTS = [
+    // ── 공통 ──
+    {
+      id: 'a_ceremony', first: true, title: '은퇴식',
+      text: (A) => `${A.team || '친정팀'} 홈구장. 마지막으로 그라운드에 선다. 관중석이 내 이름을 부른다.`,
+      choices: [
+        { label: '눈물의 연설', desc: '인기 +8', apply(A, r, o) { fans(A, o, 8); return '목이 메어 말을 잇지 못했다. 관중석도 함께 울었다.'; } },
+        { label: '웃으며 인사한다', desc: '가족 행복 +8', apply(A, r, o) { happy(A, o, 8); return '"그동안 행복했습니다!" 가족과 함께 그라운드를 한 바퀴 돌았다.'; } },
+        { label: '조용히 떠난다', desc: '건강 +4', apply(A, r, o) { health(A, o, 4); return '행사 없이 짐을 챙겨 구장을 나섰다. 마음이 홀가분했다.'; } },
+      ],
+    },
+    {
+      id: 'a_number', title: '영구결번 제의', cond: (A) => !A.numberRetired && A.score >= 520,
+      text: (A) => `${A.team || '친정팀'}이 등번호 ${A.num}번을 영구결번으로 지정하고 싶다고 연락해 왔다.`,
+      choices: [
+        { label: '감사히 받는다', desc: '인기 +10', apply(A, r, o) { A.numberRetired = true; fans(A, o, 10); return `외야 펜스에 ${A.num}번이 걸렸다.`; } },
+        { label: '후배를 위해 사양한다', desc: '인기 +6, 평판 +5', apply(A, r, o) { fans(A, o, 6); rep(A, o, 5); return '"좋은 후배가 이 번호를 달고 더 빛내 주길 바랍니다."'; } },
+      ],
+    },
+    {
+      id: 'a_hof', title: '명예의 전당 헌액식', cond: (A) => great(A) && A.year >= 3 && !A.stats.hof,
+      text: () => '명예의 전당 헌액식. 단상에 올라 연설을 한다.',
+      choices: [
+        { label: '팬들에게 감사를', desc: '인기 +12', apply(A, r, o) { A.stats.hof = true; fans(A, o, 12); return '"여러분의 함성이 저를 여기까지 데려왔습니다."'; } },
+        { label: '가족에게 영광을', desc: '가족 행복 +15', apply(A, r, o) { A.stats.hof = true; happy(A, o, 15); return '객석의 가족을 바라보며 말했다. "이건 우리 가족의 상입니다."'; } },
+        { label: '은사에게 바친다', desc: '평판 +8, 인기 +5', apply(A, r, o) { A.stats.hof = true; rep(A, o, 8); fans(A, o, 5); return '고교 시절 감독님의 이름을 부르자 장내가 숙연해졌다.'; } },
+      ],
+    },
+    {
+      id: 'a_legend_game', title: '레전드 올스타전',
+      text: () => '은퇴 선수들이 모이는 레전드 올스타전에 초청됐다.',
+      choices: [
+        { label: '진지하게 뛴다', desc: '인기 +6, 다칠 수도 있다', apply(A, r, o) { fans(A, o, 6); if (r() < 0.3) { health(A, o, -8); return '전력 질주하다 햄스트링이 올라왔다. 그래도 관중은 환호했다.'; } return '녹슬지 않은 실력에 관중석이 들썩였다.'; } },
+        { label: '팬서비스 위주로', desc: '인기 +8', apply(A, r, o) { fans(A, o, 8); return '관중석에 공을 던져 주고 함께 사진을 찍었다.'; } },
+      ],
+    },
+    {
+      id: 'a_book', title: '자서전 출간 제안',
+      text: () => '출판사가 자서전을 내자고 한다. 현역 시절 뒷이야기를 다 써 달란다.',
+      choices: [
+        { label: '솔직하게 다 쓴다', desc: '반반: 베스트셀러(돈·인기) 또는 논란', apply(A, r, o) { A.stats.books++; if (r() < 0.55) { cash(A, o, 15000); fans(A, o, 8); return '베스트셀러 1위! 인세가 들어왔다.'; } fans(A, o, -5); rep(A, o, -5); return '옛 동료 이야기가 논란이 됐다. 사과 전화를 몇 통 돌렸다.'; } },
+        { label: '감동 위주로 쓴다', desc: '인세, 인기 +4', apply(A, r, o) { A.stats.books++; cash(A, o, 5000); fans(A, o, 4); return '잔잔한 이야기가 오래 사랑받았다.'; } },
+        { label: '거절한다', desc: '아무 일도 없다', apply() { return '"아직 쓸 이야기가 남았습니다."'; } },
+      ],
+    },
+    {
+      id: 'a_rival', title: '옛 라이벌과의 재회',
+      text: () => '현역 시절 라이벌이 연락해 왔다. "한잔하자."',
+      choices: [
+        { label: '화해의 술자리', desc: '건강 −2, 가족 행복 +3', apply(A, r, o) { health(A, o, -2); happy(A, o, 3); return '서로의 공을 얼마나 무서워했는지 털어놓으며 웃었다.'; } },
+        { label: '함께 유튜브를 찍는다', desc: '인기 +8, 돈', apply(A, r, o) { fans(A, o, 8); cash(A, o, 2000); return '"세기의 라이벌 재회" 영상이 500만 뷰를 넘었다.'; } },
+        { label: '모른 척한다', desc: '아무 일도 없다', apply() { return '답장을 미루다 결국 하지 않았다.'; } },
+      ],
+    },
+    {
+      id: 'a_classmates', title: '동기 모임',
+      text: () => '고교 야구부 동기 모임. 다들 흰머리가 늘었다.',
+      choices: [
+        { label: '옛날 이야기로 밤을 새운다', desc: '가족 행복 +4, 건강 −1', apply(A, r, o) { happy(A, o, 4); health(A, o, -1); return '그때 그 결승전 이야기만 열 번은 했다.'; } },
+        { label: '사업 이야기로 이어진다', desc: '반반: 돈이 생기거나 잃는다', apply(A, r, o) { if (r() < 0.5) { cash(A, o, 8000); return '동기의 소개로 좋은 일이 들어왔다.'; } cash(A, o, -5000); return '동기에게 빌려준 돈을 돌려받지 못했다.'; } },
+      ],
+    },
+    {
+      id: 'a_parents', title: '부모님 건강', cond: (A) => A.age <= 58,
+      text: () => '어머니가 쓰러지셨다는 연락을 받았다.',
+      choices: [
+        { label: '곁을 지킨다', desc: '가족 행복 +10, 일 평판 −5', apply(A, r, o) { happy(A, o, 10); rep(A, o, -5); return '한 달 동안 병원에서 지냈다. 어머니가 손을 꼭 잡아 주셨다.'; } },
+        { label: '최고의 병원으로 모신다', desc: '5,000만, 가족 행복 +6', apply(A, r, o) { cash(A, o, -5000); happy(A, o, 6); return '빠르게 회복하셨다. "아들 덕분이다."'; } },
+      ],
+    },
+    {
+      id: 'a_kid_school', title: '자녀 진학', cond: (A) => !!kidOf(A, (k) => k.age >= 14 && k.age <= 16 && !k.school),
+      text: (A) => `${ya(kidOf(A, (k) => k.age >= 14 && k.age <= 16 && !k.school).name)}의 고등학교를 정해야 한다.`,
+      choices: [
+        { label: '야구 명문고', desc: '야구하는 아이면 실력↑', apply(A, r, o) { const k = kidOf(A, (x) => x.age >= 14 && x.age <= 16 && !x.school); k.school = 'baseball'; if (k.baseball) k.skill = (k.skill || 45) + 5; happy(A, o, 3); return `${ya(k.name)}가 야구 명문고에 입학했다.`; } },
+        { label: '집 근처 일반고', desc: '가족 행복 +5', apply(A, r, o) { const k = kidOf(A, (x) => x.age >= 14 && x.age <= 16 && !x.school); k.school = 'normal'; happy(A, o, 5); return '매일 저녁 가족이 함께 밥을 먹는다.'; } },
+        { label: '해외 유학', desc: '1억, 가족 행복 −3', apply(A, r, o) { const k = kidOf(A, (x) => x.age >= 14 && x.age <= 16 && !x.school); k.school = 'abroad'; cash(A, o, -10000); happy(A, o, -3); return `${ya(k.name)}가 미국으로 떠났다. 공항에서 한참 손을 흔들었다.`; } },
+      ],
+    },
+    {
+      id: 'a_kid_wed', title: '자녀 결혼', cond: (A) => !!kidOf(A, (k) => k.age >= 27 && !k.married),
+      text: (A) => `${ya(kidOf(A, (k) => k.age >= 27 && !k.married).name)}가 결혼할 사람을 데려왔다.`,
+      choices: [
+        { label: '성대하게 치른다', desc: '1억, 가족 행복 +12, 인기 +3', apply(A, r, o) { const k = kidOf(A, (x) => x.age >= 27 && !x.married); k.married = true; cash(A, o, -10000); happy(A, o, 12); fans(A, o, 3); return '야구계 인사들이 하객으로 왔다.'; } },
+        { label: '소박하게 치른다', desc: '가족 행복 +10', apply(A, r, o) { const k = kidOf(A, (x) => x.age >= 27 && !x.married); k.married = true; happy(A, o, 10); return '가까운 사람들만 모여 따뜻한 식을 올렸다.'; } },
+      ],
+    },
+    {
+      id: 'a_grandkid', title: '손주 탄생', cond: (A) => A.life.family.kids.some((k) => k.married) && A.stats.grandkids < 3,
+      text: () => '손주가 태어났다. 작은 손이 내 손가락을 꼭 쥔다.',
+      choices: [
+        { label: '육아를 돕는다', desc: '가족 행복 +12, 건강 −2', apply(A, r, o) { A.stats.grandkids++; happy(A, o, 12); health(A, o, -2); return '주말마다 손주를 보러 간다. 허리는 아프지만 행복하다.'; } },
+        { label: '이름을 지어 준다', desc: '가족 행복 +8', apply(A, r, o) { A.stats.grandkids++; happy(A, o, 8); return '"야구공처럼 둥글게 살아라." 이름에 뜻을 담았다.'; } },
+      ],
+    },
+    {
+      id: 'a_checkup', title: '건강검진 이상', cond: (A) => A.age >= 42,
+      text: () => '건강검진에서 혈압과 혈당이 높게 나왔다.',
+      choices: [
+        { label: '운동과 식단을 시작한다', desc: '건강 +8, 해마다 건강 관리', apply(A, r, o) { A.healthPlan = true; health(A, o, 8); return '매일 아침 공원을 뛰기 시작했다. 현역 때 같다.'; } },
+        { label: '괜찮겠지', desc: '건강 −6', apply(A, r, o) { health(A, o, -6); return '바쁘다는 핑계로 넘겼다.'; } },
+      ],
+    },
+    {
+      id: 'a_scam', title: '수상한 투자 제안', rare: true, cond: (A) => A.money.cash >= 50000,
+      text: () => '"확실한 코인"이라며 5억 투자를 권하는 사람이 찾아왔다.',
+      choices: [
+        { label: '투자한다', desc: '대부분 손해', apply(A, r, o) { if (r() < 0.15) { cash(A, o, 60000); return '믿기지 않게 대박이 났다.'; } cash(A, o, -50000); happy(A, o, -10); return '연락이 끊겼다. 5억이 사라졌다.'; } },
+        { label: '거절한다', desc: '아무 일도 없다', apply() { return '몇 달 뒤 사기 뉴스에 그 사람이 나왔다.'; } },
+      ],
+    },
+    {
+      id: 'a_realty', title: '부동산 기회', cond: (A) => A.money.cash >= 60000,
+      text: () => '재개발 지역 상가가 매물로 나왔다. 6억.',
+      choices: [
+        { label: '산다', desc: '6억, 몇 년 뒤 값이 크게 오를 수도', apply(A, r, o) { cash(A, o, -60000); A.queue.push({ id: 'a_realty2', at: A.year + 3 }); return '계약서에 도장을 찍었다.'; } },
+        { label: '지켜본다', desc: '아무 일도 없다', apply() { return '"부동산은 잘 몰라서요."'; } },
+      ],
+    },
+    {
+      id: 'a_realty2', chain: true, title: '재개발 결과',
+      text: () => '샀던 상가 지역의 재개발 결과가 나왔다.',
+      choices: [
+        { label: '결과를 본다', desc: '오르거나 내리거나', apply(A, r, o) { if (r() < 0.6) { cash(A, o, 110000); return '재개발 확정! 11억에 팔았다.'; } cash(A, o, 35000); return '재개발이 무산됐다. 3억 5,000만에 겨우 팔았다.'; } },
+      ],
+    },
+    {
+      id: 'a_charity', title: '자선 경기 초청',
+      text: () => '소아암 어린이를 돕는 자선 경기에 초청됐다.',
+      choices: [
+        { label: '직접 뛴다', desc: '인기 +6, 건강 −2', apply(A, r, o) { fans(A, o, 6); health(A, o, -2); return '아이들과 캐치볼을 했다. 오래 기억에 남을 하루였다.'; } },
+        { label: '기부만 한다', desc: '3,000만, 인기 +4', apply(A, r, o) { cash(A, o, -3000); fans(A, o, 4); return '조용히 기부금을 보냈다.'; } },
+      ],
+    },
+    {
+      id: 'a_hometown', title: '고향 명예 시민',
+      text: () => '고향에서 명예 시민증을 주겠다고 한다.',
+      choices: [
+        { label: '고향에 야구장을 기부한다', desc: '5억, 인기 +15', apply(A, r, o) { cash(A, o, -50000); fans(A, o, 15); return `"${A.name} 야구장"이 문을 열었다. 아이들이 뛰어논다.`; } },
+        { label: '감사 인사만 한다', desc: '인기 +3', apply(A, r, o) { fans(A, o, 3); return '고향 어르신들과 사진을 찍었다.'; } },
+      ],
+    },
+    {
+      id: 'a_politics', title: '정치 입문 제안', rare: true, cond: (A) => A.fans >= 50 && A.age >= 45,
+      text: () => '정당에서 국회의원 출마를 권한다. "야구처럼 국민을 위해 뛰어 주십시오."',
+      choices: [
+        { label: '출마한다', desc: '반반: 당선(인기↑) 또는 낙선(돈·행복↓)', apply(A, r, o) { cash(A, o, -20000); if (r() < 0.45) { fans(A, o, 10); A.titles = A.titles || []; A.mp = true; return '당선! 국회에서도 "레전드"로 불린다.'; } happy(A, o, -8); return '낙선했다. 야구가 그리워졌다.'; } },
+        { label: '거절한다', desc: '가족 행복 +3', apply(A, r, o) { happy(A, o, 3); return '"저는 야구인입니다."'; } },
+      ],
+    },
+    {
+      id: 'a_home_crisis', title: '친정팀의 위기',
+      text: (A) => `${A.team || '친정팀'}이 10연패에 빠졌다. 후배들이 조언을 구한다.`,
+      choices: [
+        { label: '무료로 돕는다', desc: '인기 +6, 평판 +3', apply(A, r, o) { fans(A, o, 6); rep(A, o, 3); return '일주일 동안 훈련을 함께했다. 연패가 끊겼다.'; } },
+        { label: '멀리서 지켜본다', desc: '아무 일도 없다', apply() { return '"후배들이 이겨 낼 겁니다."'; } },
+      ],
+    },
+    {
+      id: 'a_comeback', title: '은퇴 번복 유혹', cond: (A) => A.age < 40 && A.year <= 3,
+      text: () => '한 구단이 "1년만 더 뛰어 달라"며 입단 테스트를 제안했다.',
+      choices: [
+        { label: '테스트를 본다', desc: '반반: 1년 복귀(연봉) 또는 망신', apply(A, r, o) { if (r() < 0.5) { cash(A, o, 20000); fans(A, o, 12); health(A, o, -8); return '합격! 한 시즌을 더 뛰고 박수 속에 다시 은퇴했다.'; } fans(A, o, -4); return '몸이 따라 주지 않았다. 미련을 깨끗이 털었다.'; } },
+        { label: '거절한다', desc: '건강 +3', apply(A, r, o) { health(A, o, 3); return '"제 야구는 끝났습니다."'; } },
+      ],
+    },
+    {
+      id: 'a_trip', title: '배우자와 여행', cond: (A) => !!A.life.family.spouse,
+      text: () => '아내가 "현역 때 못 간 여행 가자"고 한다.',
+      choices: [
+        { label: '세계 일주', desc: '1억, 가족 행복 +15, 건강 +3', apply(A, r, o) { cash(A, o, -10000); happy(A, o, 15); health(A, o, 3); return '석 달 동안 열두 나라를 돌았다.'; } },
+        { label: '국내 여행', desc: '가족 행복 +8', apply(A, r, o) { happy(A, o, 8); return '제주도 바닷가를 함께 걸었다.'; } },
+        { label: '일이 바빠 미룬다', desc: '가족 행복 −6, 평판 +3', apply(A, r, o) { happy(A, o, -6); rep(A, o, 3); return '"내년엔 꼭 가자." 아내가 서운해했다.'; } },
+      ],
+    },
+    {
+      id: 'a_fan_kid', title: '그때 그 아이', cond: (A) => A.fanKid,
+      text: () => '오래전 병원에서 편지를 보냈던 그 아이가 프로 선수가 되어 찾아왔다.',
+      choices: [
+        { label: '함께 시구를 한다', desc: '인기 +12, 가족 행복 +5', apply(A, r, o) { fans(A, o, 12); happy(A, o, 5); return '이번엔 그가 던지고 내가 받았다. 관중석이 기립 박수를 쳤다.'; } },
+        { label: '조용히 밥을 산다', desc: '가족 행복 +6', apply(A, r, o) { happy(A, o, 6); return '"형 덕분에 여기까지 왔어요."'; } },
+      ],
+    },
+    {
+      id: 'a_mentor_funeral', title: '은사의 장례식', cond: (A) => A.age >= 45,
+      text: () => '고교 시절 감독님이 세상을 떠나셨다.',
+      choices: [
+        { label: '운구를 맡는다', desc: '인기 +4, 가족 행복 +3', apply(A, r, o) { fans(A, o, 4); happy(A, o, 3); return '제자들이 함께 마지막 길을 배웅했다.'; } },
+        { label: '추모사를 쓴다', desc: '평판 +5', apply(A, r, o) { rep(A, o, 5); return '"감독님이 가르쳐 주신 건 야구가 아니라 인생이었습니다."'; } },
+      ],
+    },
+    {
+      id: 'a_pension', title: '노후 준비', cond: (A) => A.age >= 50,
+      text: () => '은행 상담사가 노후 준비를 권한다.',
+      choices: [
+        { label: '연금에 넣는다', desc: '1억 넣고 해마다 1,500만', apply(A, r, o) { cash(A, o, -10000); A.pension = (A.pension || 0) + 1500; return '든든한 노후 계획이 생겼다.'; } },
+        { label: '부동산에 넣는다', desc: '수도권 아파트를 산다(6억)', apply(A, r, o) { const why = C.buyLife(A, 'h_apt'); if (why && !/샀다/.test(why)) return `사지 못했다: ${why}`; o.cash = (o.cash || 0) - 60000; return '노후용 아파트를 샀다.'; } },
+        { label: '자녀에게 미리 증여', desc: '2억, 가족 행복 +10', apply(A, r, o) { cash(A, o, -20000); happy(A, o, 10); return '아이들에게 미리 마음을 전했다.'; } },
+      ],
+    },
+    {
+      id: 'a_bucket', title: '버킷리스트',
+      text: () => '노트 한쪽에 적어 둔 버킷리스트를 꺼냈다.',
+      choices: [
+        { label: '마라톤 완주', desc: '건강 +6', apply(A, r, o) { health(A, o, 6); return '42.195km를 완주했다. 다리는 후들거렸지만 뿌듯했다.'; } },
+        { label: '메이저리그 구장 투어', desc: '3,000만, 가족 행복 +6', apply(A, r, o) { cash(A, o, -3000); happy(A, o, 6); return '30개 구장을 모두 돌았다.'; } },
+        { label: '귀농해 텃밭 가꾸기', desc: '건강 +4, 가족 행복 +4', apply(A, r, o) { health(A, o, 4); happy(A, o, 4); return '직접 키운 상추로 쌈을 싸 먹었다.'; } },
+      ],
+    },
+    {
+      id: 'a_kid_dream', title: '아이의 꿈', cond: (A) => !!kidOf(A, (k) => k.age >= 6 && k.age <= 12 && !k.baseball && !k.noBall),
+      text: (A) => `${ya(kidOf(A, (k) => k.age >= 6 && k.age <= 12 && !k.baseball && !k.noBall).name)}가 아빠처럼 야구를 하고 싶다고 한다.`,
+      choices: [
+        { label: '리틀야구에 보낸다', desc: '가족 행복 +8, 야구인 2세의 길', apply(A, r, o) { const k = kidOf(A, (x) => x.age >= 6 && x.age <= 12 && !x.baseball && !x.noBall); k.baseball = true; happy(A, o, 8); return `${ya(k.name)}의 첫 글러브를 직접 골라 줬다.`; } },
+        { label: '하고 싶은 걸 찾게 한다', desc: '가족 행복 +3', apply(A, r, o) { const k = kidOf(A, (x) => x.age >= 6 && x.age <= 12 && !x.baseball && !x.noBall); k.noBall = true; happy(A, o, 3); return '"네가 정말 좋아하는 걸 하렴."'; } },
+      ],
+    },
+    {
+      id: 'a_kid_coach', title: '자녀 야구 지도', cond: (A) => !!kidOf(A, (k) => k.baseball && k.age >= 10 && k.age <= 17 && !k.coach),
+      text: (A) => `${ya(kidOf(A, (k) => k.baseball && k.age >= 10 && k.age <= 17 && !k.coach).name)}의 실력이 늘고 있다. 누가 가르칠까?`,
+      choices: [
+        { label: '내가 직접 가르친다', desc: '실력이 가장 많이 늘지만, 다툴 수도', apply(A, r, o) { const k = kidOf(A, (x) => x.baseball && x.age >= 10 && x.age <= 17 && !x.coach); k.coach = 'me'; if (r() < 0.35) { happy(A, o, -6); return '"아빠는 코치처럼 굴지 마!" 한바탕 다퉜지만 실력은 늘었다.'; } happy(A, o, 6); return '주말마다 둘이 운동장에 나간다.'; } },
+        { label: '전문 코치에게 맡긴다', desc: '2,000만, 실력이 잘 는다', apply(A, r, o) { const k = kidOf(A, (x) => x.baseball && x.age >= 10 && x.age <= 17 && !x.coach); k.coach = 'pro'; cash(A, o, -2000); return '전직 프로 코치에게 레슨을 맡겼다.'; } },
+        { label: '공부도 병행시킨다', desc: '가족 행복 +5', apply(A, r, o) { const k = kidOf(A, (x) => x.baseball && x.age >= 10 && x.age <= 17 && !x.coach); k.coach = 'study'; happy(A, o, 5); return '야구는 즐겁게, 공부는 꾸준히.'; } },
+      ],
+    },
+
+    // ── 지도자 ──
+    {
+      id: 'c_clash', job: 'coach', title: '선수와의 갈등',
+      text: () => '팀 간판선수가 훈련 방식에 불만을 터뜨렸다. 기자들도 알고 있다.',
+      choices: [
+        { label: '감싸 안는다', desc: '평판 +4, 인기 +3', apply(A, r, o) { rep(A, o, 4); fans(A, o, 3); return '따로 불러 이야기를 들었다. 다음 날 그가 먼저 사과했다.'; } },
+        { label: '2군으로 보낸다', desc: '반반: 기강이 잡히거나 팀이 흔들린다', apply(A, r, o) { if (r() < 0.5) { rep(A, o, 6); return '"원칙은 누구에게나 같습니다." 팀 기강이 잡혔다.'; } rep(A, o, -6); fans(A, o, -4); return '팬들의 비판이 쏟아졌다.'; } },
+      ],
+    },
+    {
+      id: 'c_offer', job: 'coach', title: '감독 제의', cond: (A) => A.job.level === 2,
+      text: () => '하위권 팀이 감독을 맡아 달라고 한다. 계약 3년.',
+      choices: [
+        { label: '수락한다', desc: '바로 감독이 된다(전력은 약하다)', apply(A, r, o) { A.job.level = 3; A.job.mgr = 0; A.job.str = 42 + Math.round(r() * 6); fans(A, o, 5); return '감독 취임식. 유니폼에 처음으로 감독 번호를 달았다.'; } },
+        { label: '거절하고 기다린다', desc: '평판 +4', apply(A, r, o) { rep(A, o, 4); return '"아직 배울 게 많습니다."'; } },
+      ],
+    },
+    {
+      id: 'c_final', job: 'coach', title: '우승 결정전', cond: (A) => A.job.level === 3,
+      text: () => '한국시리즈 7차전. 에이스는 사흘밖에 못 쉬었다.',
+      choices: [
+        { label: '에이스를 올린다', desc: '반반: 우승 또는 혹사 논란', apply(A, r, o) { if (r() < 0.25) { A.stats.champs++; A.job.champs = (A.job.champs || 0) + 1; fans(A, o, 10); cash(A, o, 20000); return '🏆 에이스가 완투했다. 우승!'; } rep(A, o, -6); return '에이스가 무너졌다. 혹사 논란까지 따라왔다.'; } },
+        { label: '원칙대로 로테이션', desc: '평판 +5, 우승 확률은 조금 낮다', apply(A, r, o) { rep(A, o, 5); if (r() < 0.15) { A.stats.champs++; A.job.champs = (A.job.champs || 0) + 1; fans(A, o, 8); cash(A, o, 20000); return '🏆 젊은 투수가 깜짝 호투! 우승!'; } return '준우승. 그래도 선수들을 지켰다.'; } },
+      ],
+    },
+    {
+      id: 'c_fired', job: 'coach', title: '경질 위기', cond: (A) => A.job.level >= 3 && A.job.bad >= 1,
+      text: () => '연패가 길어지자 구단이 결단을 요구한다.',
+      choices: [
+        { label: '스스로 물러난다', desc: '인기 +4, 직업을 내려놓는다', apply(A, r, o) { fans(A, o, 4); A.jobs.push({ id: 'coach', level: A.job.level, years: A.job.years }); A.job = null; return '"모든 책임은 제게 있습니다." 박수 속에 떠났다.'; } },
+        { label: '버틴다', desc: '반반: 반등 또는 비판', apply(A, r, o) { if (r() < 0.5) { A.job.bad = 0; rep(A, o, 6); return '연패를 끊고 반등했다!'; } rep(A, o, -8); fans(A, o, -4); return '연패가 이어졌다. 비판이 거세졌다.'; } },
+      ],
+    },
+    {
+      id: 'c_national', job: 'coach', title: '국가대표 감독 제의', cond: (A) => A.job.level >= 3 && A.job.rep >= 60 && !A.stats.natCoach,
+      text: () => 'WBC 국가대표 감독을 맡아 달라는 제의가 왔다.',
+      choices: [
+        { label: '태극기를 단다', desc: '반반: 4강 이상(인기↑↑) 또는 조기 탈락', apply(A, r, o) { A.stats.natCoach = true; if (r() < 0.45) { fans(A, o, 15); rep(A, o, 8); return 'WBC 4강! 공항에 팬들이 마중 나왔다.'; } fans(A, o, -6); return '1라운드 탈락. 쓴소리를 많이 들었다.'; } },
+        { label: '팀에 집중한다', desc: '평판 +3', apply(A, r, o) { rep(A, o, 3); return '"지금 팀에 대한 책임이 먼저입니다."'; } },
+      ],
+    },
+    // ── 해설위원 ──
+    {
+      id: 'k_slip', job: 'caster', title: '생방송 말실수',
+      text: () => '생방송 중 무심코 한 말이 실시간 검색어에 올랐다.',
+      choices: [
+        { label: '바로 사과한다', desc: '평판 +2, 인기 −2', apply(A, r, o) { rep(A, o, 2); fans(A, o, -2); return '방송 말미에 정중히 사과했다. 금방 잠잠해졌다.'; } },
+        { label: '해명한다', desc: '반반: 오해가 풀리거나 더 커진다', apply(A, r, o) { if (r() < 0.5) { fans(A, o, 3); return '앞뒤 맥락이 알려지자 오해가 풀렸다.'; } fans(A, o, -8); rep(A, o, -6); return '해명이 오히려 불씨를 키웠다.'; } },
+      ],
+    },
+    {
+      id: 'k_legend_call', job: 'caster', title: '명해설 화제',
+      text: () => '끝내기 홈런 순간 내 해설이 "레전드 중계"로 퍼지고 있다.',
+      choices: [
+        { label: '유행어로 밀어 본다', desc: '인기 +8', apply(A, r, o) { fans(A, o, 8); return '그 말이 올해의 유행어가 됐다.'; } },
+        { label: '담담하게 넘긴다', desc: '평판 +5', apply(A, r, o) { rep(A, o, 5); return '"선수가 잘한 겁니다."'; } },
+      ],
+    },
+    {
+      id: 'k_bias', job: 'caster', title: '친정팀 편파 논란',
+      text: (A) => `${A.team || '친정팀'} 경기에서 목소리가 너무 커졌다는 항의가 쏟아졌다.`,
+      choices: [
+        { label: '중립을 약속한다', desc: '평판 +4', apply(A, r, o) { rep(A, o, 4); return '다음 경기부터 양 팀을 고르게 짚었다.'; } },
+        { label: '"저는 원래 팬입니다"', desc: '인기 +5, 평판 −4', apply(A, r, o) { fans(A, o, 5); rep(A, o, -4); return '친정 팬들은 환호했고, 상대 팬들은 채널을 돌렸다.'; } },
+      ],
+    },
+    {
+      id: 'k_move', job: 'caster', title: '방송사 이적 제의',
+      text: () => '경쟁 방송사가 출연료 두 배를 제시했다.',
+      choices: [
+        { label: '옮긴다', desc: '5,000만, 평판 −3', apply(A, r, o) { cash(A, o, 5000); rep(A, o, -3); return '새 방송사에서 새 출발.'; } },
+        { label: '의리를 지킨다', desc: '평판 +6', apply(A, r, o) { rep(A, o, 6); return '"저를 키워 준 곳입니다."'; } },
+      ],
+    },
+    {
+      id: 'k_national', job: 'caster', title: '국가대표 결승 중계',
+      text: () => '올림픽 결승 중계석에 앉게 됐다. 시청률 40%가 예상된다.',
+      choices: [
+        { label: '감정을 담아 중계한다', desc: '인기 +10', apply(A, r, o) { fans(A, o, 10); return '"대한민국! 금메달입니다!" 목이 쉬도록 외쳤다.'; } },
+        { label: '차분하게 분석한다', desc: '평판 +8', apply(A, r, o) { rep(A, o, 8); return '수준 높은 분석에 "역대급 중계"라는 평이 나왔다.'; } },
+      ],
+    },
+    // ── 스카우트 ──
+    {
+      id: 's_gem', job: 'scout', title: '무명 고교생 발굴',
+      text: () => '시골 고교 경기에서 눈에 띄는 선수를 봤다. 아무도 모르는 이름이다.',
+      choices: [
+        { label: '강력 추천한다', desc: '반반: 대박(평판↑↑) 또는 헛걸음', apply(A, r, o) { if (r() < 0.45) { rep(A, o, 12); A.stats.stars++; return '그 선수가 신인왕을 받았다. "숨은 보석을 찾았다."'; } rep(A, o, -4); return '프로의 벽을 넘지 못했다.'; } },
+        { label: '1년 더 지켜본다', desc: '평판 +3', apply(A, r, o) { rep(A, o, 3); return '신중하게 기록을 쌓아 두었다.'; } },
+      ],
+    },
+    {
+      id: 's_trip', job: 'scout', title: '해외 출장',
+      text: () => '도미니카와 대만으로 외국인 선수 출장을 가야 한다. 두 달 동안.',
+      choices: [
+        { label: '간다', desc: '평판 +6, 가족 행복 −4', apply(A, r, o) { rep(A, o, 6); happy(A, o, -4); return '흙먼지 날리는 구장에서 원석을 찾았다.'; } },
+        { label: '후배를 보낸다', desc: '가족 행복 +3', apply(A, r, o) { happy(A, o, 3); return '후배가 꼼꼼한 보고서를 보내왔다.'; } },
+      ],
+    },
+    {
+      id: 's_mvp', job: 'scout', title: '내가 뽑은 선수의 MVP', cond: (A) => A.job.picks && A.job.picks.length >= 3,
+      text: () => '예전에 내가 추천한 선수가 MVP 시상식에서 내 이름을 불렀다.',
+      choices: [
+        { label: '시상식에 간다', desc: '인기 +6, 평판 +6', apply(A, r, o) { fans(A, o, 6); rep(A, o, 6); return '"그분이 저를 믿어 주셨습니다." 눈시울이 붉어졌다.'; } },
+        { label: '조용히 축하 문자', desc: '평판 +4', apply(A, r, o) { rep(A, o, 4); return '"이제 시작이다." 짧은 문자를 보냈다.'; } },
+      ],
+    },
+    {
+      id: 's_first', job: 'scout', title: '1순위 지명 고민',
+      text: () => '전체 1순위. 완성형 대학 투수와 잠재력 큰 고교 타자 가운데 골라야 한다.',
+      choices: [
+        { label: '완성형 투수', desc: '평판 +5(안정)', apply(A, r, o) { rep(A, o, 5); return '바로 1군 선발로 자리 잡았다.'; } },
+        { label: '잠재력 큰 타자', desc: '반반: 대박 또는 실패', apply(A, r, o) { if (r() < 0.5) { rep(A, o, 12); A.stats.stars++; return '3년 뒤 홈런왕이 됐다!'; } rep(A, o, -6); return '좀처럼 성장하지 못했다.'; } },
+      ],
+    },
+    {
+      id: 's_poach', job: 'scout', title: '경쟁 구단의 스카우트 제의',
+      text: () => '경쟁 구단이 연봉 50% 인상으로 스카우트 팀장 자리를 제안했다.',
+      choices: [
+        { label: '옮긴다', desc: '3,000만, 평판 −3', apply(A, r, o) { cash(A, o, 3000); rep(A, o, -3); return '새 팀의 스카우트 수첩을 받았다.'; } },
+        { label: '남는다', desc: '평판 +5', apply(A, r, o) { rep(A, o, 5); return '"이 팀의 미래를 제가 찾겠습니다."'; } },
+      ],
+    },
+    // ── 아카데미 ──
+    {
+      id: 'y_draft', job: 'academy', title: '제자의 프로 지명',
+      text: () => '아카데미 첫 제자가 프로 2라운드에 지명됐다. 기자들이 찾아왔다.',
+      choices: [
+        { label: '인터뷰에 나선다', desc: '학생 +20, 인기 +5', apply(A, r, o) { A.job.n += 20; A.stats.pupils++; fans(A, o, 5); return '"제자가 잘한 겁니다." 상담 전화가 쏟아졌다.'; } },
+        { label: '제자를 앞세운다', desc: '평판 +6', apply(A, r, o) { A.stats.pupils++; rep(A, o, 6); return '사진 한 장 없이 축하만 했다. 좋은 스승이라는 평이 났다.'; } },
+      ],
+    },
+    {
+      id: 'y_parent', job: 'academy', title: '학부모 민원',
+      text: () => '한 학부모가 "우리 아이를 주전으로 세워 달라"며 항의한다.',
+      choices: [
+        { label: '원칙을 지킨다', desc: '평판 +5, 학생 −5', apply(A, r, o) { rep(A, o, 5); A.job.n = Math.max(5, A.job.n - 5); return '"실력으로 정합니다." 몇 명이 그만뒀지만 신뢰가 쌓였다.'; } },
+        { label: '타협한다', desc: '학생 +5, 평판 −4', apply(A, r, o) { A.job.n += 5; rep(A, o, -4); return '분위기가 묘해졌다.'; } },
+      ],
+    },
+    {
+      id: 'y_branch', job: 'academy', title: '분점 제안', cond: (A) => A.job.level < 2,
+      text: () => '다른 도시에서 분점을 내 달라는 요청이 왔다. 투자자가 반을 대겠단다.',
+      choices: [
+        { label: '분점을 낸다', desc: '2억 5,000만, 한 단계 커진다', apply(A, r, o) { if (A.money.cash < 25000) return '돈이 모자라 미뤘다.'; cash(A, o, -25000); A.job.level++; return `${JOBS.academy.levels[A.job.level]}로 커졌다.`; } },
+        { label: '지금에 집중한다', desc: '평판 +3', apply(A, r, o) { rep(A, o, 3); return '아이들 한 명 한 명에 더 신경 썼다.'; } },
+      ],
+    },
+    {
+      id: 'y_talent', job: 'academy', title: '가난한 천재 아이',
+      text: () => '형편이 어려워 수강료를 못 내는 아이가 있다. 재능은 지금까지 본 아이 중 최고다.',
+      choices: [
+        { label: '장학금을 준다', desc: '인기 +5, 몇 년 뒤 이야기가 이어진다', apply(A, r, o) { fans(A, o, 5); A.queue.push({ id: 'y_talent2', at: A.year + 4 }); return '"돈 걱정 말고 공만 던져라."'; } },
+        { label: '정규 수강을 권한다', desc: '아무 일도 없다', apply() { return '아이는 다시 오지 않았다.'; } },
+      ],
+    },
+    {
+      id: 'y_talent2', chain: true, job: 'academy', title: '그 아이의 지명',
+      text: () => '장학금을 줬던 아이가 프로 1라운드에 지명됐다.',
+      choices: [
+        { label: '함께 운다', desc: '인기 +12, 가족 행복 +5', apply(A, r, o) { A.stats.pupils++; fans(A, o, 12); happy(A, o, 5); return '"감독님 아니었으면 야구를 그만뒀을 거예요."'; } },
+      ],
+    },
+    {
+      id: 'y_club', job: 'academy', title: '프로 구단의 위탁 육성',
+      text: () => '프로 구단이 유망주 위탁 육성을 맡기고 싶다고 한다.',
+      choices: [
+        { label: '맡는다', desc: '1억, 평판 +5', apply(A, r, o) { cash(A, o, 10000); rep(A, o, 5); return '구단 유니폼을 입은 아이들이 훈련장에 왔다.'; } },
+        { label: '아이들에게 집중', desc: '가족 행복 +3', apply(A, r, o) { happy(A, o, 3); return '"우리 아이들이 먼저입니다."'; } },
+      ],
+    },
+    // ── 사업 ──
+    {
+      id: 'b_tv', job: 'biz', cond: (A) => !!A.job.type, title: '맛집 방송 대박',
+      text: () => '인기 맛집 프로그램에 가게가 나왔다. 다음 날부터 줄이 섰다.',
+      choices: [
+        { label: '직원을 늘린다', desc: '5,000만 투자, 규모↑', apply(A, r, o) { cash(A, o, -5000); A.job.cap += 15000; return '줄이 길어도 손님을 다 받았다.'; } },
+        { label: '품질을 지킨다', desc: '인기 +5, 평판 +5', apply(A, r, o) { fans(A, o, 5); rep(A, o, 5); return '하루 한정 판매로 품질을 지켰다.'; } },
+      ],
+    },
+    {
+      id: 'b_bust', job: 'biz', cond: (A) => !!A.job.type, title: '경기 불황',
+      text: () => '불황으로 손님이 반으로 줄었다.',
+      choices: [
+        { label: '버틴다', desc: '반반: 회복 또는 손해', apply(A, r, o) { if (r() < 0.5) { cash(A, o, 3000); return '단골손님들이 가게를 지켜 줬다.'; } cash(A, o, -8000); return '적자가 쌓였다.'; } },
+        { label: '규모를 줄인다', desc: '손해를 막는다', apply(A, r, o) { A.job.cap = round100(A.job.cap * 0.8); cash(A, o, round100(A.job.cap * 0.1)); return '좌석을 줄이고 메뉴를 정리했다.'; } },
+      ],
+    },
+    {
+      id: 'b_franchise', job: 'biz', cond: (A) => !!A.job.type && A.job.level < 2, title: '프랜차이즈 제의',
+      text: () => '프랜차이즈 본사가 내 이름으로 체인을 내자고 한다.',
+      choices: [
+        { label: '계약한다', desc: '한 단계 커지고 로열티 1억', apply(A, r, o) { A.job.level++; cash(A, o, 10000); return '전국에 내 이름 간판이 걸리기 시작했다.'; } },
+        { label: '직접 운영을 고집한다', desc: '평판 +5', apply(A, r, o) { rep(A, o, 5); return '"맛은 제가 지킵니다."'; } },
+      ],
+    },
+    {
+      id: 'b_theft', job: 'biz', cond: (A) => !!A.job.type, rare: true, title: '직원 횡령',
+      text: () => '믿었던 점장이 매출을 빼돌린 사실이 드러났다.',
+      choices: [
+        { label: '고소한다', desc: '반반: 돈을 되찾는다', apply(A, r, o) { if (r() < 0.5) return '재판 끝에 돈을 돌려받았다.'; cash(A, o, -6000); return '돈은 돌아오지 않았다.'; } },
+        { label: '용서한다', desc: '6,000만 손해, 평판 +4', apply(A, r, o) { cash(A, o, -6000); rep(A, o, 4); return '"다시는 이러지 마라."'; } },
+      ],
+    },
+    {
+      id: 'b_second', job: 'biz', cond: (A) => !!A.job.type && A.job.level === 0, title: '2호점 자리',
+      text: () => '번화가에 좋은 자리가 났다. 2호점을 낼까?',
+      choices: [
+        { label: '연다', desc: '2호점(규모 크게↑)', apply(A, r, o) { const c = BIZ[A.job.type].cost; if (A.money.cash < c) return '돈이 모자라 포기했다.'; cash(A, o, -c); A.job.cap += c; A.job.level = 1; return '2호점 개업! 동료들이 화환을 보냈다.'; } },
+        { label: '1호점에 집중', desc: '평판 +3', apply(A, r, o) { rep(A, o, 3); return '한 곳을 제대로 키우기로 했다.'; } },
+      ],
+    },
+    // ── 방송인·유튜버 ──
+    {
+      id: 'm_million', job: 'media', cond: (A) => A.job.subs >= 600000, title: '구독자 100만 눈앞',
+      text: () => '구독자 100만이 코앞이다. 기념 이벤트를 할까?',
+      choices: [
+        { label: '팬 미팅을 연다', desc: '구독자 +15만, 인기 +5', apply(A, r, o) { A.job.subs += 150000; fans(A, o, 5); return '팬 미팅에 2,000명이 몰렸다.'; } },
+        { label: '기부 라이브', desc: '구독자 +10만, 인기 +8', apply(A, r, o) { A.job.subs += 100000; fans(A, o, 8); return '라이브 후원금을 모두 기부했다.'; } },
+      ],
+    },
+    {
+      id: 'm_variety', job: 'media', title: '예능 섭외',
+      text: () => '주말 예능에서 고정 출연 제안이 왔다.',
+      choices: [
+        { label: '출연한다', desc: '1억, 인기 +10, 가족 시간 ↓', apply(A, r, o) { cash(A, o, 10000); fans(A, o, 10); happy(A, o, -4); A.job.subs += 80000; return '첫 회부터 시청률이 올랐다.'; } },
+        { label: '채널에 집중한다', desc: '구독자 +3만', apply(A, r, o) { A.job.subs += 30000; return '내 채널이 더 중요하다.'; } },
+      ],
+    },
+    {
+      id: 'm_past', job: 'media', title: '과거 발언 논란',
+      text: () => '현역 시절 인터뷰가 다시 퍼지며 논란이 됐다.',
+      choices: [
+        { label: '진심으로 사과한다', desc: '인기 −3, 구독자 유지', apply(A, r, o) { fans(A, o, -3); return '사과 영상에 응원 댓글이 이어졌다.'; } },
+        { label: '무대응', desc: '반반: 묻히거나 구독자 −20%', apply(A, r, o) { if (r() < 0.5) return '며칠 지나 잠잠해졌다.'; A.job.subs = Math.round(A.job.subs * 0.8); fans(A, o, -6); return '구독 취소가 이어졌다.'; } },
+      ],
+    },
+    {
+      id: 'm_ad', job: 'media', title: '광고 섭외',
+      text: () => '두 곳에서 광고 제안이 왔다. 건강식품(1억)과 동네 야구용품점(1,000만).',
+      choices: [
+        { label: '건강식품', desc: '1억, 반반 "뒷광고" 논란', apply(A, r, o) { cash(A, o, 10000); if (r() < 0.4) { fans(A, o, -6); return '과장 광고 논란이 났다.'; } return '광고 수익이 쏠쏠했다.'; } },
+        { label: '야구용품점', desc: '1,000만, 인기 +6', apply(A, r, o) { cash(A, o, 1000); fans(A, o, 6); return '"역시 야구인"이라는 댓글이 달렸다.'; } },
+      ],
+    },
+    {
+      id: 'm_kids_on', job: 'media', cond: hasKids, title: '자녀 출연',
+      text: () => '구독자들이 아이를 영상에 보여 달라고 한다.',
+      choices: [
+        { label: '함께 출연한다', desc: '구독자 +10만, 가족 행복 ±', apply(A, r, o) { A.job.subs += 100000; happy(A, o, r() < 0.6 ? 6 : -6); return '아이와 캐치볼 영상이 인기 급상승 1위에 올랐다.'; } },
+        { label: '가족은 지킨다', desc: '가족 행복 +6', apply(A, r, o) { happy(A, o, 6); return '"가족은 카메라 밖에 둘게요."'; } },
+      ],
+    },
+  ];
+  const EVENT_BY_ID = Object.fromEntries(EVENTS.map((e) => [e.id, e]));
+  // 다시 나올 수 있는 이벤트(나머지는 한 번)
+  const REPEAT = { a_legend_game: 4, a_classmates: 5, a_charity: 4, a_bucket: 6, c_clash: 3, c_final: 6, k_slip: 3, k_legend_call: 4, s_gem: 3, s_trip: 4, y_parent: 3, b_bust: 3, b_tv: 5, m_ad: 3, m_past: 4, a_kid_coach: 0 };
+
+  function okEvent(A, e) {
+    if (e.chain) return false;
+    if (e.job && !(A.job && A.job.id === e.job)) return false;
+    if (e.cond && !e.cond(A)) return false;
+    const last = A.evHist[e.id];
+    if (last != null) { const cd = REPEAT[e.id]; if (!cd || A.year - last < cd) return false; }
+    return true;
+  }
+  /** 이번에 일어날 이벤트 id(없으면 null) */
+  function rollEvent(A, rng) {
+    const qi = A.queue.findIndex((q) => q.at <= A.year && EVENT_BY_ID[q.id]);
+    if (qi >= 0) return A.queue.splice(qi, 1)[0].id;
+    if (A.year === 1 && A.evHist.a_ceremony == null) return 'a_ceremony';
+    const pool = EVENTS.filter((e) => okEvent(A, e) && (!e.rare || rng() < 0.3));
+    if (!pool.length) return null;
+    const job = pool.filter((e) => e.job);
+    const fresh = pool.filter((e) => A.evHist[e.id] == null);
+    if (job.length && rng() < 0.45) return rng.pick(job).id;
+    return rng.pick(fresh.length && rng() < 0.8 ? fresh : pool).id;
+  }
+  /** 이벤트 선택 */
+  function chooseEvent(A, idx, rng) {
+    const e = EVENT_BY_ID[A.event];
+    const o = {};
+    const c = e && e.choices[idx];
+    if (!c) return null;
+    o.text = c.apply(A, rng, o);
+    o.title = e.title;
+    o.choice = c.label;
+    A.evHist[e.id] = A.year;
+    A.evSeen.push(e.id);
+    A.event = null;
+    A.evLeft = Math.max(0, A.evLeft - 1);
+    (A.yearNotes = A.yearNotes || []).push(`${e.title}: ${c.label}`);
+    return o;
+  }
+  /** 이벤트 단계: 다음 이벤트를 꺼내고, 없으면 결산으로 */
+  function nextEvent(A, rng) {
+    while (A.evLeft > 0) {
+      const id = rollEvent(A, rng);
+      if (id) { A.event = id; return id; }
+      A.evLeft--;
+    }
+    A.phase = 'review';
+    return null;
+  }
+
+  // ── 마무리 ──────────────────────────────────────────────
+  function titleOf(A) {
+    const S = A.stats;
+    const jobsAll = A.jobs.concat(A.job ? [A.job] : []);
+    const top = (id, lv) => jobsAll.some((j) => j.id === id && j.level >= lv);
+    if (S.champs >= 3) return '전설의 감독';
+    if (S.champs >= 1) return '우승 감독';
+    if (top('caster', 3)) return '국민 해설위원';
+    if (S.stars >= 5) return '명스카우트';
+    if (S.pupils >= 14) return '아카데미의 아버지';
+    if (top('biz', 2)) return '사업왕';
+    if (S.peakSubs >= 1e6) return '100만 유튜버';
+    if (top('coach', 4)) return '명단장';
+    if (A.mp) return '야구인 출신 국회의원';
+    if (C.netWorth(A) >= 1e6) return '야구 재벌';
+    if (A.life.family.happy >= 80) return '행복한 가장';
+    return '평범한 행복';
+  }
+  function finish(A, early) {
+    A.done = true;
+    A.phase = 'end';
+    const net = C.netWorth(A);
+    const S = A.stats;
+    const lines = [];
+    const jobsAll = A.jobs.concat(A.job ? [A.job] : []);
+    const names = [...new Set(jobsAll.map((j) => JOBS[j.id].name))];
+    if (names.length) lines.push(`${names.join(' → ')}${jobsAll.length ? `로 ${A.age - A.retiredAge}년을 보냈다.` : ''}`);
+    if (S.champs) lines.push(`우승 반지를 ${S.champs}개 끼었다.`);
+    if (S.pupils) lines.push(`제자 ${S.pupils}명이 프로 무대를 밟았다.`);
+    if (S.stars) lines.push(`직접 뽑은 선수 ${S.stars}명이 스타가 됐다.`);
+    if (S.peakSubs >= 1e5) lines.push(`채널 구독자는 최고 ${S.peakSubs.toLocaleString('ko-KR')}명까지 늘었다.`);
+    if (S.hof) lines.push('명예의 전당 헌액식 연설은 지금도 회자된다.');
+    const F = A.life.family;
+    if (F.spouse) lines.push(F.happy >= 70 ? '아내와 함께 늙어 가는 하루하루가 행복하다.' : '아내와 조용한 저녁을 보낸다.');
+    if (S.grandkids) lines.push(`손주 ${S.grandkids}명이 할아버지의 야구 이야기를 졸라 댄다.`);
+    const heir = F.kids.find((k) => k.draft && k.draft !== '대학 진학');
+    if (heir) lines.push(`${ya(heir.name)}는 프로 선수가 되어 아빠의 등번호를 달았다.`);
+    if (early && A.health <= 10) lines.push('건강을 돌보려고 모든 일을 내려놓고 고향으로 돌아갔다.');
+    lines.push(`순자산 ${C.money(net)}.`);
+    const title = titleOf(A);
+    return { title, lines, net, age: A.age, early: !!early, jobs: names, champs: S.champs, pupils: S.pupils, stars: S.stars, grandkids: S.grandkids };
+  }
+  /** 원할 때 끝낸다 */
+  function endNow(A) { A.ending = finish(A, true); return A.ending; }
+
+  /** 명예의 전당 기록에 은퇴 후 삶을 남긴다 */
+  function recordAfter(legacy, A) {
+    const L = legacy || { list: [], pending: 0 };
+    const r = (L.list || []).find((x) => x.id === A.recId);
+    if (r && A.ending) r.after = { title: A.ending.title, age: A.ending.age, net: A.ending.net, jobs: A.ending.jobs, champs: A.ending.champs, pupils: A.ending.pupils };
+    if (A.heir && !L.heir) L.heir = A.heir;
+    return L;
+  }
+
+  // 연금: 해마다 들어온다
+  const baseEnd = endYear;
+  function endYearWithPension(A, rng) {
+    if (A.pension) A.money.cash += A.pension;
+    return baseEnd(A, rng);
+  }
+
+  C.After = {
+    END_AGE, JOBS, BIZ, EVENTS, EVENT_BY_ID, startAfter, cantStart, startJob, jobTitle, levelName, dirsFor, newYear, setPlan,
+    nextEvent, chooseEvent, endYear: endYearWithPension, endNow, finish, titleOf, recordAfter, netOf,
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script>
 /* 자동 생성: node tools/odds.js 400 (손으로 고치지 마세요) */
-(function (g) { (g.BB = g.BB || {}).ODDS = {"generated":"2026-11-22","careers":400,"sections":[{"title":"커리어 · 타자","note":"보통 실력으로 처음부터 끝까지 400명을 시뮬레이션한 결과입니다. 훈련·승부처 성공률은 사람마다 다르게(35~95%) 두었고, 해외 제안은 절반쯤 받아들였습니다. 직접 잘하면 확률이 올라갑니다.","rows":[["드래프트 1라운드 지명","8.8%"],["드래프트 2라운드 지명","7.8%"],["드래프트 3라운드 지명","10.3%"],["드래프트 4~10라운드 지명","73.3%"],["미지명 → 육성선수","0.0%"],["1군(KBO·NPB·MLB) 데뷔","80.5%","평균 21.8세"],["주전(선발·마무리) 한 번 이상","79.5%"],["FA 자격","78.0%"],["일본 구단의 제안을 받음","67.0%"],["메이저리그 구단의 제안을 받음","51.5%"],["일본에서 뜀","41.5%"],["메이저리그에서 뜀","24.0%"],["방출로 끝남","20.0%"],["큰 부상(수술) 한 번 이상","43.8%"],["각성(잠재력 +8) 한 번 이상","37.0%"],["성장 정체(잠재력 −6) 한 번 이상","44.3%"],["가을야구 한 번 이상","80.5%"],["우승(한국·일본·월드시리즈) 한 번 이상","65.8%"],["국가대표 한 번 이상","67.0%"],["국제대회 우승·금메달","49.3%"],["결혼","11.5%"],["아이가 생김","9.5%"],["아이가 야구를 함(야구인 2세)","0.25%"],["은퇴 나이(평균)","34.3세"]]},{"title":"명예의 전당 등급 · 타자","note":"은퇴할 때 받는 등급의 분포","rows":[["전설","10.8%","1500점 이상"],["명예의 전당","45.0%","900점 이상"],["프랜차이즈 스타","23.8%","520점 이상"],["성실한 프로","1.0%","220점 이상"],["아쉬운 커리어","19.5%","0점 이상"]]},{"title":"수상·기록 · 타자","note":"커리어에서 한 번 이상 받을(달성할) 확률","rows":[["올스타","80.3%"],["국가대표","65.0%"],["한국시리즈 우승","62.5%"],["골든글러브","44.3%"],["NPB 올스타","36.8%"],["한국시리즈 MVP","36.8%"],["MLB 올스타","23.3%"],["타격왕","23.0%"],["MVP","22.0%"],["아시안게임 금메달","17.5%"],["신인왕","17.5%"],["일본시리즈 우승","14.0%"],["프리미어12 준우승","13.0%"],["WBC 준우승","12.3%"],["올림픽 금메달","12.3%"],["베스트 나인","11.0%"],["WBC 우승","10.5%"],["프리미어12 우승","10.3%"],["올림픽 은메달","8.8%"],["퓨처스 타격왕","8.5%"],["올림픽 동메달","7.5%"],["올해의 신인","6.8%"],["NPB 타격왕","6.5%"],["아시안게임 은메달","6.3%"],["청소년 국가대표","6.3%"],["NPB MVP","5.8%"],["일본시리즈 MVP","5.8%"],["홈런왕","4.3%"],["퓨처스 홈런왕","4.3%"],["월드시리즈 우승","3.5%"],["U-18 야구 월드컵 우승","2.3%"],["실버슬러거","2.0%"],["트리플A 올스타","1.8%"],["타점왕","1.8%"],["U-18 야구 월드컵 준우승","1.8%"],["월드시리즈 MVP","1.5%"],["고교 홈런왕","1.5%"],["APBC 우승","1.5%"],["MLB 타격왕","1.0%"],["고교 타격왕","1.0%"],["APBC 준우승","0.75%"],["NPB 타점왕","0.75%"],["NPB 홈런왕","0.25%"],["통산 100안타 달성","80.5%"],["통산 500안타 달성","80.5%"],["통산 50홈런 달성","80.5%"],["통산 100홈런 달성","77.0%"],["통산 1,000안타 달성","76.0%"],["통산 500타점 달성","75.8%"],["통산 1,500안타 달성","48.3%"],["통산 200홈런 달성","34.8%"],["통산 100도루 달성","29.8%"],["통산 1,000타점 달성","17.3%"],["통산 2,000안타 달성","16.5%"],["통산 300홈런 달성","8.0%"],["통산 200도루 달성","3.3%"],["통산 2,500안타 달성","2.3%"],["통산 400홈런 달성","0.75%"],["통산 1,500타점 달성","0.25%"]]},{"title":"커리어 · 투수","note":"보통 실력으로 처음부터 끝까지 400명을 시뮬레이션한 결과입니다. 훈련·승부처 성공률은 사람마다 다르게(35~95%) 두었고, 해외 제안은 절반쯤 받아들였습니다. 직접 잘하면 확률이 올라갑니다.","rows":[["드래프트 1라운드 지명","10.0%"],["드래프트 2라운드 지명","8.3%"],["드래프트 3라운드 지명","18.3%"],["드래프트 4~10라운드 지명","63.2%"],["미지명 → 육성선수","0.25%"],["1군(KBO·NPB·MLB) 데뷔","76.3%","평균 21.9세"],["주전(선발·마무리) 한 번 이상","76.3%"],["FA 자격","68.0%"],["일본 구단의 제안을 받음","73.3%"],["메이저리그 구단의 제안을 받음","53.0%"],["일본에서 뜀","54.0%"],["메이저리그에서 뜀","27.5%"],["방출로 끝남","25.0%"],["큰 부상(수술) 한 번 이상","43.0%"],["각성(잠재력 +8) 한 번 이상","39.5%"],["성장 정체(잠재력 −6) 한 번 이상","42.3%"],["가을야구 한 번 이상","76.3%"],["우승(한국·일본·월드시리즈) 한 번 이상","61.0%"],["국가대표 한 번 이상","68.0%"],["국제대회 우승·금메달","48.5%"],["결혼","9.8%"],["아이가 생김","8.5%"],["아이가 야구를 함(야구인 2세)","0.50%"],["은퇴 나이(평균)","32.9세"]]},{"title":"명예의 전당 등급 · 투수","note":"은퇴할 때 받는 등급의 분포","rows":[["전설","4.3%","1500점 이상"],["명예의 전당","37.3%","900점 이상"],["프랜차이즈 스타","32.0%","520점 이상"],["성실한 프로","2.8%","220점 이상"],["아쉬운 커리어","23.8%","0점 이상"]]},{"title":"수상·기록 · 투수","note":"커리어에서 한 번 이상 받을(달성할) 확률","rows":[["올스타","68.0%"],["국가대표","67.0%"],["한국시리즈 우승","52.3%"],["탈삼진왕","48.8%"],["NPB 올스타","46.0%"],["한국시리즈 MVP","28.5%"],["MLB 올스타","25.5%"],["NPB 탈삼진왕","24.5%"],["일본시리즈 우승","20.5%"],["골든글러브","19.8%"],["평균자책점왕","18.3%"],["WBC 준우승","15.3%"],["올림픽 금메달","15.0%"],["올림픽 은메달","14.8%"],["프리미어12 준우승","14.2%"],["프리미어12 우승","14.0%"],["WBC 우승","14.0%"],["세이브왕","11.0%"],["아시안게임 금메달","9.3%"],["올해의 신인","8.8%"],["올림픽 동메달","8.5%"],["신인왕","8.3%"],["NPB 세이브왕","8.0%"],["일본시리즈 MVP","8.0%"],["월드시리즈 우승","5.3%"],["NPB 평균자책점왕","5.3%"],["MLB 평균자책점왕","4.8%"],["NPB 다승왕","4.5%"],["청소년 국가대표","3.8%"],["트리플A 올스타","3.8%"],["MLB 탈삼진왕","3.5%"],["아시안게임 은메달","3.3%"],["사이영상","3.0%"],["MLB 다승왕","3.0%"],["사와무라상","2.8%"],["다승왕","2.5%"],["월드시리즈 MVP","2.3%"],["APBC 준우승","2.0%"],["MLB 세이브왕","1.5%"],["U-18 야구 월드컵 우승","1.5%"],["고교 최우수 투수","1.3%"],["APBC 우승","1.0%"],["U-18 야구 월드컵 준우승","1.0%"],["통산 500탈삼진 달성","76.3%"],["통산 50승 달성","73.8%"],["통산 1,000탈삼진 달성","69.3%"],["통산 1,500탈삼진 달성","43.8%"],["통산 100승 달성","41.0%"],["통산 2,000탈삼진 달성","21.3%"],["통산 100세이브 달성","18.5%"],["통산 150승 달성","10.8%"],["통산 200세이브 달성","9.0%"],["통산 2,500탈삼진 달성","7.5%"],["통산 300세이브 달성","2.5%"],["통산 3,000탈삼진 달성","2.0%"],["통산 400세이브 달성","1.0%"],["통산 200승 달성","0.50%"]]},{"title":"시즌마다","note":"1군 무대(KBO·NPB·MLB) 한 시즌 기준","rows":[["가을야구 진출","50.4%","KBO 5위·NPB 리그 3위·MLB 6위까지"],["우승","11.5%"],["국가대표 발탁","16.6%","대회가 있는 해(4년 중 3년)만"],["이벤트 발생(시즌 전)","KBO 45% · 해외 60%","고를 이벤트가 남아 있을 때"],["이벤트 발생(시즌 중)","KBO 30% · 해외 45%"],["이어지는 이야기(예약된 이벤트)","100%","정해진 시즌이 되면 반드시"],["같은 이벤트 다시 보기","한 번뿐","슬럼프·허리 통증·오심 등 몇 개만 4~6시즌 뒤에"]]},{"title":"집안 환경","note":"새 선수를 만들 때 랜덤으로 정해집니다. 은퇴한 선수의 아이가 야구를 했다면 \"야구인 2세\"를 직접 고를 수 있습니다.","rows":[["평범한 회사원 집","55%","아버지는 회사원, 어머니는 분식집. 늘 응원해 주는 가족"],["어려운 형편","20%","부모님 빚 5,000만 원. 헝그리 정신으로 훈련 효과 +15%"],["야구인 집안","13%","아버지가 전직 프로야구 선수. 능력치 두 개 +2, 인기 +10"],["부잣집","12%","시작 자산 5억. 부족함 없이 자라 훈련 효과 −8%"]]},{"title":"운","note":"시즌이 끝날 때","rows":[["운이 따른 시즌(빗맞아도 안타)","13.6%","시즌 운 1.1σ 이상"],["불운한 시즌(잘 맞아도 정면)","13.6%"],["각성(잠재력 +8)","7%","26세 이하"],["성장 정체(잠재력 −6)","8%","26세 이하"],["큰 부상(수술)","3% · 30세부터 5%","고교 제외"],["실전 활약 성장(잠재력 +2~3)","OPS .850 이상이면 100%","33세 이하"],["방출","2군 4시즌째 승격 실패 · 30세 이상 1군 OPS .620 미만","조건이 되면 100%"],["드래프트","성적·능력치·승부처 + 스카우트의 눈(±7점)","11라운드 밖이면 육성선수"],["2군 → 1군 승격","OPS .820 이상 + 평균 능력치 50 → 100%","못 미쳐도 OPS .740 이상이면 30%"]]},{"title":"수상(조건을 넘었을 때)","note":"기준을 넘으면 받는 확률. 리그 1위 기준은 해마다 조금씩 다릅니다.","rows":[["신인왕","85%","첫 1군 시즌 OPS .780 이상, 200타석"],["골든글러브","70% (OPS .970 이상이면 100%)","주전 OPS .900 이상"],["KBO MVP","70%","OPS 1.000 이상 + 30홈런 또는 타율 .340"],["MLB MVP","60%","OPS 1.000 이상 + 40홈런 또는 타율 .330"],["NPB MVP","60%","OPS .980 이상"],["사이영상","60%","MLB 선발 평균자책점 2.60 이하, 170이닝"],["사와무라상","60%","NPB 선발 평균자책점 2.20 이하, 170이닝"],["투수 골든글러브","70%","KBO 선발 평균자책점 2.70 이하, 150이닝"]]},{"title":"가을야구·국가대표 경기","note":"결정적 순간(직접 치는 한 타석·이닝)의 결과에 따라","rows":[["첫 시리즈 승리","성공 70% · 절반 45% · 실패 20%"],["다음 시리즈 승리","43~55%","1·2위 팀이면 +5%"],["KBO 우승 보너스","5,000만 원","NPB 8,000만 · MLB 2억"],["WBC 우승","성공 30% · 실패 5%","우승 못 하면 준우승 35%"],["아시안게임 금메달","성공 60% · 실패 30%","금메달이면 병역 특례"],["프리미어12 우승","성공 35% · 실패 10%"],["올림픽 금메달","성공 35% · 실패 10%","금 못 따면 은 35% · 그다음 동 40% · 메달이면 병역 특례"],["APBC 우승","성공 50% · 실패 25%","만 24세 이하 국내·일본 선수, 큰 대회에 못 뽑힌 해"],["U-18 야구 월드컵 우승","성공 45% · 실패 20%","고교 2·3학년 나이, 최상위 성적"],["한국시리즈 MVP","우승 + 결정적 순간 성공이면 50%"]]},{"title":"수비","note":"내야 땅볼(주력 50) 기준","rows":[["병살(1루 주자, 2아웃 전)","40.5%"],["포스 아웃만(타자는 1루 세이프)","52.0%"],["내야안타","7.5%"],["1루수가 직접 베이스를 밟음","18.7%"],["투수가 1루 커버","5.7%"],["다이빙 캐치 시도","내야 40% · 외야 45%","닿을 듯 말 듯한 공"]]},{"title":"투수 모드","note":"능력치 60 투수가 포수 사인대로 제구 미터를 잘 맞혀 던질 때(타석당)","rows":[["2군 타자 상대","피안타율 0.171","삼진 26% · 볼넷 2% · 피홈런 0.67%"],["KBO 1군 타자 상대","피안타율 0.223","삼진 19% · 볼넷 2% · 피홈런 1%"],["NPB 타자 상대","피안타율 0.228","삼진 16% · 볼넷 2% · 피홈런 2%"],["MLB 타자 상대","피안타율 0.255","삼진 15% · 볼넷 2% · 피홈런 1%"],["포수 사인대로 던지기","제구 오차 −25%","타자도 조금 더 속는다"],["같은 손 타자","타자 실력 −4","반대 손이면 +2"]]},{"title":"게스 히팅","note":"투구 전에 예측한 칸(4칸 중 하나)","rows":[["적중하면","정타 범위 +5° · 잘 맞은 범위 +8° · 높이 허용 +3.5cm · 변화구 끝까지 보임","도착 위치와 볼·스트라이크 표시"],["빗나가면","정타 범위 −2° · 높이 허용 −1cm"],["적중 판정","칸 안쪽 경계는 3.5cm, 바깥쪽 방향은 존 밖 30cm까지"]]},{"title":"내 인생 · 시세","note":"한 시즌 뒤 값이 오를 확률과 평균 변화(정규분포)","rows":[["원룸 전세","오를 확률 84%","평균 +1% · 흔들림 ±1%"],["수도권 아파트","오를 확률 72%","평균 +4% · 흔들림 ±7%"],["서울 아파트","오를 확률 73%","평균 +5% · 흔들림 ±8%"],["한강뷰 아파트","오를 확률 71%","평균 +5% · 흔들림 ±9%"],["정원 딸린 단독주택","오를 확률 72%","평균 +4% · 흔들림 ±7%"],["초고층 펜트하우스","오를 확률 66%","평균 +4% · 흔들림 ±10%"],["도쿄 고급 맨션","오를 확률 66%","평균 +2% · 흔들림 ±5%"],["LA 해변 별장","오를 확률 67%","평균 +3% · 흔들림 ±7%"],["경차","오를 확률 0.00%","평균 -12% · 흔들림 ±3%"],["국산 SUV","오를 확률 0.00%","평균 -12% · 흔들림 ±3%"],["수입 고급 세단","오를 확률 0.02%","평균 -14% · 흔들림 ±4%"],["스포츠카","오를 확률 0.26%","평균 -14% · 흔들림 ±5%"],["슈퍼카","오를 확률 5%","평균 -10% · 흔들림 ±6%"],["한정판 하이퍼카","오를 확률 60%","평균 +2% · 흔들림 ±8%"],["명품 시계","오를 확률 63%","평균 +1% · 흔들림 ±3%"],["한정판 시계","오를 확률 77%","평균 +6% · 흔들림 ±8%"],["현대 미술 작품","오를 확률 62%","평균 +6% · 흔들림 ±20%"],["요트","오를 확률 2%","평균 -8% · 흔들림 ±4%"],["개인 전용기","오를 확률 2%","평균 -6% · 흔들림 ±3%"]]}],"events":[{"id":"form","title":"타격 폼 교정","rare":false,"chain":false,"stages":["hs","farm"],"who":"B","choices":[{"label":"새 폼에 도전한다","outcomes":[{"p":"61%","text":"새 폼이 몸에 붙었다. 타구에 힘이 실린다."},{"p":"39%","text":"타이밍이 자꾸 늦었다. 아직은 몸에 맞지 않는다."}]},{"label":"지금 폼을 지킨다","outcomes":[{"p":"100%","text":"익숙한 폼으로 감각을 다듬었다."}]}],"meetB":"13%","meetP":"0%"},{"id":"scout","title":"관중석의 스카우트","rare":false,"chain":false,"stages":["hs"],"who":"B","choices":[{"label":"힘껏 휘둘러 보여 준다","outcomes":[{"p":"100%","text":"큰 스윙으로 눈도장을 찍었다."}]},{"label":"평소대로 친다","outcomes":[{"p":"100%","text":"흔들리지 않고 내 야구를 했다."}]}],"meetB":"2%","meetP":"0%"},{"id":"slump","title":"슬럼프","rare":false,"chain":false,"stages":["farm","kbo","mlb","aaa","npb"],"who":"B","choices":[{"label":"타이밍을 앞당겨 강하게 친다","outcomes":[{"p":"100%","text":"강한 타구가 돌아왔다. 헛스윙도 조금 늘었다."}]},{"label":"밀어치기로 감을 찾는다","outcomes":[{"p":"100%","text":"반대쪽으로 가볍게 치며 감을 되찾았다."}]},{"label":"하루 쉬며 영상을 본다","outcomes":[{"p":"100%","text":"머리를 비우고 내 타석을 다시 봤다."}]}],"meetB":"23%","meetP":"0%"},{"id":"back","title":"허리 통증","rare":false,"chain":false,"stages":["hs","farm","kbo","mlb","aaa","npb"],"who":"","choices":[{"label":"참고 뛴다","outcomes":[{"p":"64%","text":"통증을 참고 버텼다. 몸이 무겁다."},{"p":"36%","text":"결국 허리를 다쳤다. 시즌 일부를 결장한다."}]},{"label":"일주일 쉰다","outcomes":[{"p":"100%","text":"푹 쉬고 돌아왔다. 몸이 가볍다."}]}],"meetB":"27%","meetP":"23%"},{"id":"extra","title":"특타 제안","rare":false,"chain":false,"stages":["hs","farm","kbo","mlb","aaa","npb"],"who":"B","choices":[{"label":"특타를 받는다","outcomes":[{"p":"100%","text":"파워을(를) 집중적으로 다듬었다."}]},{"label":"푹 쉰다","outcomes":[{"p":"100%","text":"충분히 쉬고 시즌을 맞았다."}]}],"meetB":"42%","meetP":"0%"},{"id":"veteran","title":"선배의 조언","rare":false,"chain":false,"stages":["farm","kbo","aaa","npb"],"who":"B","choices":[{"label":"배운다","outcomes":[{"p":"100%","text":"노릴 공과 버릴 공이 구분되기 시작했다."}]},{"label":"내 방식대로 간다","outcomes":[{"p":"100%","text":"내 스윙을 믿고 밀고 나갔다."}]}],"meetB":"36%","meetP":"0%"},{"id":"interview","title":"방송 인터뷰","rare":false,"chain":false,"stages":["farm","kbo","mlb","npb"],"who":"","choices":[{"label":"자신 있게 말한다","outcomes":[{"p":"100%","text":"\"다음 타석도 기대해 주세요.\" 팬들이 환호했다."}]},{"label":"짧게 끝내고 쉰다","outcomes":[{"p":"100%","text":"조용히 다음 경기를 준비했다."}]}],"meetB":"23%","meetP":"20%"},{"id":"night","title":"원정 숙소의 밤","rare":false,"chain":false,"stages":["kbo","mlb","npb"],"who":"","choices":[{"label":"함께 어울린다","outcomes":[{"p":"100%","text":"동료들과 가까워졌다. 다음 날 몸은 무거웠다."}]},{"label":"일찍 잔다","outcomes":[{"p":"100%","text":"푹 자고 개운하게 일어났다."}]}],"meetB":"19%","meetP":"14%"},{"id":"rival","title":"주전 경쟁","rare":false,"chain":false,"stages":["kbo"],"who":"","choices":[{"label":"훈련량을 늘린다","outcomes":[{"p":"100%","text":"누구보다 일찍 나와 방망이를 돌렸다."}]},{"label":"실전에서 보여 준다","outcomes":[{"p":"100%","text":"결정적인 순간에 증명하기로 했다. 승부처 정타 범위가 넓어진다."}]}],"meetB":"29%","meetP":"23%"},{"id":"trade","title":"트레이드 소문","rare":true,"chain":false,"stages":["kbo"],"who":"","choices":[{"label":"이적을 받아들인다","outcomes":[{"p":"100%","text":"시즌이 끝나면 ○○ 구단으로 옮긴다. 다음 시즌 주전으로 뛴다."}]},{"label":"남겠다고 말한다","outcomes":[{"p":"100%","text":"\"이 팀에서 끝까지 하겠습니다.\" 팬들이 감동했다."}]}],"meetB":"6%","meetP":"5%"},{"id":"language","title":"언어의 벽","rare":false,"chain":false,"stages":["mlb","aaa"],"who":"","choices":[{"label":"영어 과외를 받는다","outcomes":[{"p":"100%","text":"매일 밤 영어 공부를 했다. 동료들과 말이 통하기 시작한다. (−2,000만)"}]},{"label":"통역에게 의지한다","outcomes":[{"p":"100%","text":"통역 덕분에 마음은 편하지만 동료들과는 거리가 있다."}]}],"meetB":"14%","meetP":"20%"},{"id":"travel","title":"서부 원정 10연전","rare":false,"chain":false,"stages":["mlb"],"who":"","choices":[{"label":"그냥 버틴다","outcomes":[{"p":"100%","text":"눈이 감긴 채로 타석에 섰다."}]},{"label":"전담 트레이너를 쓴다","outcomes":[{"p":"100%","text":"수면과 식단을 관리받으며 버텼다. (−1,500만)"}]}],"meetB":"5%","meetP":"12%"},{"id":"bench","title":"감독의 불신","rare":false,"chain":false,"stages":["mlb"],"who":"B","choices":[{"label":"묵묵히 훈련한다","outcomes":[{"p":"100%","text":"경기 전 가장 먼저 나와 배팅 케이지에 섰다."}]},{"label":"감독실 문을 두드린다","outcomes":[{"p":"51%","text":"\"그 배짱이 마음에 든다.\" 다음 날 선발 명단에 이름이 올랐다."},{"p":"49%","text":"감독의 표정이 굳었다. 한동안 대타로만 나간다."}]}],"meetB":"6%","meetP":"0%"},{"id":"press","title":"현지 언론의 혹평","rare":false,"chain":false,"stages":["mlb","aaa"],"who":"","choices":[{"label":"기사를 보지 않는다","outcomes":[{"p":"100%","text":"휴대폰을 끄고 야구에만 집중했다."}]},{"label":"인터뷰로 정면 반박한다","outcomes":[{"p":"100%","text":"\"결과로 보여 주겠다.\" 현지 팬들이 이름을 기억하기 시작했다."}]}],"meetB":"8%","meetP":"15%"},{"id":"bus","title":"마이너리그 버스","rare":false,"chain":false,"stages":["aaa"],"who":"","choices":[{"label":"버스에서 버틴다","outcomes":[{"p":"100%","text":"좁은 버스에서 동료들과 친해졌다. 몸은 고되다."}]},{"label":"내 돈으로 비행기를 탄다","outcomes":[{"p":"100%","text":"편하게 이동했지만 동료들과는 어색하다. (−1,000만)"}]}],"meetB":"5%","meetP":"7%"},{"id":"homesick","title":"향수병","rare":false,"chain":false,"stages":["mlb","aaa"],"who":"","choices":[{"label":"가족을 불러온다","outcomes":[{"p":"100%","text":"가족이 와서 마음이 편해졌다. (−3,000만)"}]},{"label":"야구에만 집중한다","outcomes":[{"p":"100%","text":"외로움을 훈련으로 이겨 냈다."}]}],"meetB":"9%","meetP":"15%"},{"id":"velocity","title":"160km 강속구","rare":false,"chain":false,"stages":["mlb","aaa"],"who":"B","choices":[{"label":"스윙을 줄인다","outcomes":[{"p":"100%","text":"짧고 빠른 스윙으로 강속구에 대응한다."}]},{"label":"내 스윙으로 정면 승부","outcomes":[{"p":"100%","text":"물러서지 않고 풀스윙을 고집한다."}]}],"meetB":"16%","meetP":"0%"},{"id":"p_slot","title":"팔 각도 바꾸기","rare":false,"chain":false,"stages":["hs","farm","aaa"],"who":"P","choices":[{"label":"스리쿼터로 내린다","outcomes":[{"p":"61%","text":"공이 타자 앞에서 춤추기 시작했다."},{"p":"39%","text":"릴리스 포인트가 자꾸 바뀐다. 아직 몸에 맞지 않는다."}]},{"label":"지금 폼을 지킨다","outcomes":[{"p":"100%","text":"익숙한 폼으로 밸런스를 다듬었다."}]}],"meetB":"0%","meetP":"16%"},{"id":"p_gun","title":"스피드건을 든 스카우트","rare":false,"chain":false,"stages":["hs"],"who":"P","choices":[{"label":"전력으로 뿌린다","outcomes":[{"p":"100%","text":"전광판에 찍힌 숫자에 관중석이 술렁였다."}]},{"label":"평소대로 던진다","outcomes":[{"p":"100%","text":"흔들리지 않고 내 공을 던졌다."}]}],"meetB":"0%","meetP":"2%"},{"id":"p_slump","title":"난타","rare":false,"chain":false,"stages":["farm","kbo","mlb","aaa","npb"],"who":"P","choices":[{"label":"결정구를 다시 다듬는다","outcomes":[{"p":"100%","text":"불펜에서 공 100개를 더 던지며 그립을 고쳤다."}]},{"label":"투구 습관을 고친다","outcomes":[{"p":"100%","text":"글러브 속 그립이 보였다. 습관을 고치자 공이 다시 숨었다."}]},{"label":"하루 쉬며 영상을 본다","outcomes":[{"p":"100%","text":"머리를 비우고 내 투구를 다시 봤다."}]}],"meetB":"0%","meetP":"20%"},{"id":"p_count","title":"투구 수 110개","rare":false,"chain":false,"stages":["farm","kbo","mlb","aaa","npb"],"who":"P","choices":[{"label":"끝까지 던지겠다","outcomes":[{"p":"73%","text":"마지막 공까지 내가 던졌다. 관중이 기립 박수를 쳤다."},{"p":"27%","text":"완투는 해냈지만 다음 날 팔꿈치가 붓기 시작했다."}]},{"label":"공을 넘긴다","outcomes":[{"p":"100%","text":"불펜이 리드를 지켰다. 다음 등판을 위해 어깨를 아꼈다."}]}],"meetB":"0%","meetP":"21%"},{"id":"p_blown","title":"블론 세이브","rare":false,"chain":false,"stages":["kbo","mlb","aaa","npb"],"who":"P","choices":[{"label":"바로 잊는다","outcomes":[{"p":"100%","text":"\"내일 또 던지면 된다.\" 짧게 말하고 짐을 쌌다."}]},{"label":"밤새 영상을 돌려 본다","outcomes":[{"p":"100%","text":"실투가 몰린 코스를 찾아냈다. 같은 실수는 하지 않는다."}]},{"label":"선배와 저녁을 먹는다","outcomes":[{"p":"100%","text":"\"나는 세 번 연속 맞은 적도 있어.\" 선배의 말에 웃음이 났다."}]}],"meetB":"0%","meetP":"14%"},{"id":"p_newpitch","title":"새 구종 제안","rare":false,"chain":false,"stages":["farm","kbo","mlb","aaa","npb"],"who":"P","choices":[{"label":"새 구종을 배운다","outcomes":[{"p":"100%","text":"캐치볼부터 너클볼을 섞기 시작했다."}]},{"label":"지금 공을 갈고닦는다","outcomes":[{"p":"100%","text":"익숙한 공의 완성도를 높이기로 했다."}]}],"meetB":"0%","meetP":"29%"},{"id":"p_grip","title":"선배의 그립","rare":false,"chain":false,"stages":["farm","kbo","aaa","npb"],"who":"P","choices":[{"label":"배운다","outcomes":[{"p":"100%","text":"손가락 위치 하나로 공이 이렇게 달라질 줄은 몰랐다."}]},{"label":"정중히 사양한다","outcomes":[{"p":"100%","text":"내 공은 내가 만들기로 했다."}]}],"meetB":"0%","meetP":"32%"},{"id":"p_power","title":"빅리그 타자들의 힘","rare":false,"chain":false,"stages":["mlb","aaa"],"who":"P","choices":[{"label":"하이 패스트볼","outcomes":[{"p":"100%","text":"존 위쪽으로 힘 있게 꽂는 연습을 했다."}]},{"label":"낮게 가라앉는 투심","outcomes":[{"p":"100%","text":"땅볼을 만드는 공을 손에 넣었다."}]}],"meetB":"0%","meetP":"21%"},{"id":"fan_letter","title":"어린 팬의 편지","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"다음 경기에서 약속한다","outcomes":[{"p":"100%","text":"\"꼭 홈런을 보여 줄게.\" 기자들이 이 약속을 기사로 썼다."}]},{"label":"사인볼과 답장을 보낸다","outcomes":[{"p":"100%","text":"정성껏 쓴 답장과 사인볼을 보냈다."}]}],"meetB":"15%","meetP":"13%"},{"id":"fan_letter2","title":"그 아이가 왔다","rare":false,"chain":true,"stages":["hs","farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"함께 시구 행사를 한다","outcomes":[{"p":"100%","text":"아이의 공을 받아 주자 관중석이 일어나 박수를 쳤다."}]},{"label":"조용히 사인만 해 준다","outcomes":[{"p":"100%","text":"경기 전 더그아웃에서 조용히 사인을 해 줬다."}]}],"meetB":"7%","meetP":"6%"},{"id":"agent","title":"에이전트의 제안","rare":false,"chain":false,"stages":["farm","kbo"],"who":"","choices":[{"label":"계약한다","outcomes":[{"p":"100%","text":"에이전트와 손을 잡았다. 큰 계약은 그에게 맡긴다."}]},{"label":"혼자 한다","outcomes":[{"p":"100%","text":"협상도 내 손으로 하기로 했다."}]}],"meetB":"36%","meetP":"25%"},{"id":"variety","title":"예능 출연 제안","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"출연한다","outcomes":[{"p":"100%","text":"입담이 화제가 됐다. 야구를 모르던 사람들도 이름을 안다."}]},{"label":"정중히 거절한다","outcomes":[{"p":"100%","text":"그 시간에 약점을 보완했다."}]}],"meetB":"19%","meetP":"17%"},{"id":"charity","title":"재단 설립","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"재단을 만든다","outcomes":[{"p":"100%","text":"유소년 야구 재단이 문을 열었다. 아이들에게 글러브와 배트를 나눴다."}]},{"label":"은퇴 후로 미룬다","outcomes":[{"p":"100%","text":"지금은 야구에 집중하기로 했다."}]}],"meetB":"30%","meetP":"27%"},{"id":"charity2","title":"재단의 첫 열매","rare":false,"chain":true,"stages":["hs","farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"축하 전화를 건다","outcomes":[{"p":"100%","text":"\"이제 경쟁자네.\" 웃으며 통화를 끝냈다. 연말 사회공헌상을 받았다."}]}],"meetB":"12%","meetP":"9%"},{"id":"marriage","title":"결혼","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"이번 겨울에 결혼한다","outcomes":[{"p":"100%","text":"많은 동료들이 축하해 줬다. 마음이 든든하다."}]},{"label":"커리어에 집중한다","outcomes":[{"p":"100%","text":"결혼은 조금 더 미루기로 했다."}]}],"meetB":"27%","meetP":"19%"},{"id":"baby","title":"첫아이","rare":false,"chain":true,"stages":["hs","farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"출산 휴가를 쓴다","outcomes":[{"p":"100%","text":"아이를 처음 안았다. 다음 경기부터 더 힘이 났다."}]},{"label":"경기에 남는다","outcomes":[{"p":"100%","text":"경기를 마치고 새벽 비행기로 달려갔다."}]}],"meetB":"10%","meetP":"9%"},{"id":"captain","title":"주장 제안","rare":false,"chain":false,"stages":["kbo","npb"],"who":"","choices":[{"label":"주장을 맡는다","outcomes":[{"p":"100%","text":"완장을 찼다. 더그아웃 분위기는 이제 내 몫이다."}]},{"label":"내 야구에 집중한다","outcomes":[{"p":"100%","text":"\"아직은 제 플레이로 보여 드리겠습니다.\""}]}],"meetB":"20%","meetP":"15%"},{"id":"mentor","title":"신인의 부탁","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"전담해서 가르친다","outcomes":[{"p":"100%","text":"내가 아는 것을 모두 알려 줬다. 신인의 눈빛이 달라졌다."}]},{"label":"내 훈련에 집중한다","outcomes":[{"p":"100%","text":"\"보고 배우는 게 제일 빨라.\" 묵묵히 훈련했다."}]}],"meetB":"7%","meetP":"7%"},{"id":"streak","title":"연속 기록","rare":false,"chain":false,"stages":["farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"기록에 도전한다","outcomes":[{"p":"55%","text":"의식할수록 몸이 굳었다. 기록은 거기서 멈췄다."},{"p":"45%","text":"31경기 연속 안타! 구단 신기록을 세웠다."}]},{"label":"신경 쓰지 않는다","outcomes":[{"p":"100%","text":"\"기록은 따라오는 겁니다.\" 평소처럼 경기를 준비했다."}]}],"meetB":"24%","meetP":"19%"},{"id":"umpire","title":"오심","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"강하게 항의한다","outcomes":[{"p":"51%","text":"퇴장과 함께 출장 정지 1경기를 받았다."},{"p":"49%","text":"심판이 판정을 번복하지는 않았지만 팬들은 내 편이었다."}]},{"label":"참고 다음을 준비한다","outcomes":[{"p":"100%","text":"분했지만 다음 공에 집중했다."}]}],"meetB":"18%","meetP":"13%"},{"id":"sponsor","title":"용품 후원 제안","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"후원을 받는다","outcomes":[{"p":"100%","text":"새 장비로 시즌을 시작한다."}]},{"label":"쓰던 장비를 고집한다","outcomes":[{"p":"100%","text":"손에 익은 장비가 최고다."}]}],"meetB":"32%","meetP":"32%"},{"id":"dh_move","title":"지명타자 제안","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"B","choices":[{"label":"지명타자로 간다","outcomes":[{"p":"100%","text":"방망이에만 집중하니 타구에 힘이 붙었다."}]},{"label":"수비를 지킨다","outcomes":[{"p":"100%","text":"\"글러브는 아직 못 내려놓습니다.\""}]}],"meetB":"17%","meetP":"0%"},{"id":"data_lab","title":"전력분석팀의 데이터","rare":false,"chain":false,"stages":["farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"데이터를 받아들인다","outcomes":[{"p":"100%","text":"숫자대로 연습했더니 감각이 달라졌다."}]},{"label":"내 감을 믿는다","outcomes":[{"p":"100%","text":"\"야구는 숫자만으로 하는 게 아니죠.\""}]}],"meetB":"39%","meetP":"37%"},{"id":"old_friend","title":"동기의 은퇴","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"은퇴식에 간다","outcomes":[{"p":"100%","text":"마지막 타석을 지켜보며 오래 박수를 쳤다."}]},{"label":"나는 아직이다","outcomes":[{"p":"100%","text":"그날 밤 혼자 실내 연습장에 불을 켰다."}]}],"meetB":"5%","meetP":"3%"},{"id":"farm_coach","title":"2군 감독의 특별 지도","rare":false,"chain":false,"stages":["farm"],"who":"","choices":[{"label":"따른다","outcomes":[{"p":"100%","text":"새벽 훈련이 쌓여 약점이 메워졌다."}]},{"label":"내 루틴을 지킨다","outcomes":[{"p":"100%","text":"무리하지 않고 내 페이스를 지켰다."}]}],"meetB":"6%","meetP":"6%"},{"id":"farm_trade","title":"트레이드 제안","rare":false,"chain":false,"stages":["farm"],"who":"","choices":[{"label":"새 팀에서 새 출발","outcomes":[{"p":"100%","text":"시즌이 끝나면 ○○ 구단으로 간다. 새 팀에서는 기회가 더 많다."}]},{"label":"이 팀에서 버틴다","outcomes":[{"p":"100%","text":"\"여기서 꼭 1군에 올라가겠습니다.\""}]}],"meetB":"3%","meetP":"4%"},{"id":"youtube","title":"유튜브 채널","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"채널을 연다","outcomes":[{"p":"100%","text":"훈련 브이로그가 조회수 100만을 넘었다."}]},{"label":"야구로만 보여 준다","outcomes":[{"p":"100%","text":"말보다 경기로 보여 주기로 했다."}]}],"meetB":"21%","meetP":"18%"},{"id":"pitch_clock","title":"피치클락","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"P","choices":[{"label":"템포를 올린다","outcomes":[{"p":"100%","text":"빠른 템포로 타자를 몰아붙였다."}]},{"label":"루틴을 지키며 적응한다","outcomes":[{"p":"100%","text":"짧아진 시간 안에 내 루틴을 압축했다."}]}],"meetB":"0%","meetP":"30%"},{"id":"tommy","title":"팔꿈치 인대","rare":true,"chain":false,"stages":["kbo","npb","mlb","aaa"],"who":"P","choices":[{"label":"토미존 수술을 받는다","outcomes":[{"p":"100%","text":"수술대에 올랐다. 긴 재활이 시작된다."}]},{"label":"주사를 맞고 던진다","outcomes":[{"p":"51%","text":"통증을 참고 시즌을 버텼다."},{"p":"49%","text":"결국 통증이 심해졌다. 구속이 떨어졌다."}]}],"meetB":"0%","meetP":"5%"},{"id":"tommy2","title":"재활 끝, 복귀","rare":false,"chain":true,"stages":["hs","farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"돌아왔다!","outcomes":[{"p":"100%","text":"관중석이 기립 박수로 복귀를 반겼다."}]}],"meetB":"0%","meetP":"2%"},{"id":"launch","title":"발사각 혁명","rare":false,"chain":false,"stages":["farm","kbo","npb","mlb","aaa"],"who":"B","choices":[{"label":"어퍼스윙으로 바꾼다","outcomes":[{"p":"100%","text":"타구가 하늘로 솟기 시작했다. 삼진도 조금 늘었다."}]},{"label":"레벨 스윙을 지킨다","outcomes":[{"p":"100%","text":"라인드라이브로 승부하기로 했다."}]}],"meetB":"36%","meetP":"0%"},{"id":"homecoming","title":"돌아온 영웅","rare":false,"chain":false,"stages":["kbo"],"who":"","choices":[{"label":"모자를 벗어 인사한다","outcomes":[{"p":"100%","text":"\"다녀왔습니다.\" 함성이 쏟아졌다."}]}],"meetB":"6%","meetP":"7%"},{"id":"npb_lang","title":"일본어 공부","rare":false,"chain":false,"stages":["npb"],"who":"","choices":[{"label":"매일 일본어를 공부한다","outcomes":[{"p":"100%","text":"서툰 일본어로 인터뷰를 하자 팬들이 크게 반겼다."}]},{"label":"통역에게 맡긴다","outcomes":[{"p":"100%","text":"야구에만 집중하기로 했다."}]}],"meetB":"24%","meetP":"35%"},{"id":"npb_ouen","title":"나만의 응원가","rare":false,"chain":false,"stages":["npb"],"who":"","choices":[{"label":"응원단에 인사하러 간다","outcomes":[{"p":"100%","text":"응원단과 사진을 찍었다. 다음 날 응원가가 더 커졌다."}]},{"label":"경기로 보답한다","outcomes":[{"p":"100%","text":"응원가가 들릴 때마다 힘이 났다."}]}],"meetB":"20%","meetP":"27%"},{"id":"npb_small","title":"일본식 세밀한 야구","rare":false,"chain":false,"stages":["npb"],"who":"","choices":[{"label":"그대로 따른다","outcomes":[{"p":"100%","text":"세밀한 야구가 몸에 붙었다."}]},{"label":"내 스타일을 지킨다","outcomes":[{"p":"100%","text":"힘으로 승부하는 내 야구를 지키기로 했다."}]}],"meetB":"23%","meetP":"37%"},{"id":"npb_onsen","title":"원정지의 온천","rare":false,"chain":false,"stages":["npb"],"who":"","choices":[{"label":"같이 간다","outcomes":[{"p":"100%","text":"동료들과 한층 가까워졌다."}]},{"label":"숙소에서 개인 훈련","outcomes":[{"p":"100%","text":"혼자 섀도 스윙을 300번 했다."}]}],"meetB":"19%","meetP":"28%"},{"id":"l_bday","title":"아버지 환갑","rare":false,"chain":false,"stages":["farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"잔치를 크게 연다","outcomes":[{"p":"100%","text":"동료들까지 와서 아버지가 그렇게 웃으시는 건 처음 봤다."}]},{"label":"가족끼리 조촐하게","outcomes":[{"p":"100%","text":"집에서 미역국을 먹고 사진을 찍었다."}]}],"meetB":"38%","meetP":"38%"},{"id":"l_sibling","title":"동생의 등록금","rare":false,"chain":false,"stages":["farm","kbo","npb"],"who":"","choices":[{"label":"내가 낸다","outcomes":[{"p":"100%","text":"\"형(오빠) 덕분이야.\" 동생이 처음으로 고맙다고 했다."}]},{"label":"장학금을 알아보라고 한다","outcomes":[{"p":"100%","text":"동생은 아르바이트를 시작했다. 마음 한구석이 무겁다."}]}],"meetB":"38%","meetP":"37%"},{"id":"l_dating","title":"열애설","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"공개 연애를 한다","outcomes":[{"p":"100%","text":"\"예쁘게 만나고 있습니다.\" 팬들이 축하해 줬다."}]},{"label":"부인한다","outcomes":[{"p":"100%","text":"\"친한 친구입니다.\" 기사가 조용히 묻혔다."}]}],"meetB":"17%","meetP":"17%"},{"id":"l_second","title":"둘째 소식","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"두 팔 벌려 반긴다","outcomes":[{"p":"10%","text":"둘째 나하윤이가 태어났다. 집이 시끌벅적하다."},{"p":"10%","text":"둘째 나서아가 태어났다. 집이 시끌벅적하다."},{"p":"10%","text":"둘째 나도윤이가 태어났다. 집이 시끌벅적하다."},{"p":"10%","text":"둘째 나건우가 태어났다. 집이 시끌벅적하다."},{"p":"9%","text":"둘째 나이준이가 태어났다. 집이 시끌벅적하다."},{"p":"9%","text":"둘째 나아린이가 태어났다. 집이 시끌벅적하다."},{"p":"9%","text":"둘째 나하은이가 태어났다. 집이 시끌벅적하다."},{"p":"9%","text":"둘째 나지안이가 태어났다. 집이 시끌벅적하다."},{"p":"9%","text":"둘째 나지유가 태어났다. 집이 시끌벅적하다."},{"p":"8%","text":"둘째 나주원이가 태어났다. 집이 시끌벅적하다."},{"p":"8%","text":"둘째 나시우가 태어났다. 집이 시끌벅적하다."}]}],"meetB":"3%","meetP":"2%"},{"id":"l_kidball","title":"아이의 꿈","rare":false,"chain":false,"stages":["farm","kbo","npb","mlb","aaa","hs"],"who":"","choices":[{"label":"리틀야구에 보낸다","outcomes":[{"p":"100%","text":"나서준의 첫 글러브를 직접 골라 줬다."}]},{"label":"공부를 시킨다","outcomes":[{"p":"100%","text":"\"야구는 아빠 하나로 충분해.\""}]}],"meetB":"0.25%","meetP":"0.50%"},{"id":"l_scam","title":"지인의 투자 제안","rare":true,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"투자한다","outcomes":[{"p":"64%","text":"연락이 끊겼다. 10억이 사라졌다."},{"p":"36%","text":"정말로 대박이 났다. 15억이 들어왔다."}]},{"label":"정중히 거절한다","outcomes":[{"p":"100%","text":"\"돈 거래는 안 합니다.\" 몇 달 뒤 그 사업이 망했다는 소식을 들었다."}]}],"meetB":"4%","meetP":"3%"},{"id":"l_scandal","title":"사치 논란","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"기부로 답한다","outcomes":[{"p":"100%","text":"조용히 낸 기부금이 알려지자 여론이 돌아섰다."}]},{"label":"신경 쓰지 않는다","outcomes":[{"p":"100%","text":"비판 기사가 며칠 더 이어졌다."}]}],"meetB":"0%","meetP":"0%"},{"id":"l_tax","title":"해외 소득 세금","rare":true,"chain":false,"stages":["mlb","npb","aaa"],"who":"","choices":[{"label":"세무사를 쓴다","outcomes":[{"p":"100%","text":"전문가가 깔끔하게 정리해 줬다."}]},{"label":"직접 처리한다","outcomes":[{"p":"51%","text":"실수로 가산세 2억을 물었다."},{"p":"49%","text":"밤새 서류와 씨름했지만 무사히 끝냈다."}]}],"meetB":"1%","meetP":"2%"},{"id":"l_boom","title":"집값 급등","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"가장 비싼 집을 팔아 차익을 남긴다","outcomes":[{"p":"100%","text":"한강뷰 아파트를 51억 7,500만에 팔았다. 이사는 번거로웠다."}]},{"label":"계속 산다","outcomes":[{"p":"100%","text":"\"우리 가족이 사는 집이니까요.\""}]}],"meetB":"0%","meetP":"0%"},{"id":"hs_camp","title":"동계 전지훈련","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"전지훈련에 간다","outcomes":[{"p":"100%","text":"따뜻한 바닷바람 속에서 하루 500개씩 공을 쳤다(던졌다)."}]},{"label":"학교 운동장에서 버틴다","outcomes":[{"p":"100%","text":"얼어붙은 운동장을 뛰고 또 뛰었다."}]}],"meetB":"4%","meetP":"4%"},{"id":"hs_newcoach","title":"새 감독 부임","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"새 방식에 맞춘다","outcomes":[{"p":"66%","text":"프로식 훈련이 몸에 맞았다. 약점이 눈에 띄게 줄었다."},{"p":"34%","text":"새 방식이 낯설어 한동안 헤맸다."}]},{"label":"예전 방식을 지킨다","outcomes":[{"p":"100%","text":"익숙한 루틴으로 시즌을 준비했다."}]}],"meetB":"2%","meetP":"3%"},{"id":"hs_dorm","title":"기숙사 생활","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"규칙을 지킨다","outcomes":[{"p":"100%","text":"푹 자고 나니 아침 훈련이 가벼웠다."}]},{"label":"몰래 야간 개인 훈련","outcomes":[{"p":"68%","text":"아무도 모르게 실력이 늘었다."},{"p":"32%","text":"훈련은 됐지만 사감 선생님께 걸려 반성문을 썼다."}]}],"meetB":"3%","meetP":"4%"},{"id":"hs_path","title":"진로 상담","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"프로 직행을 노린다","outcomes":[{"p":"100%","text":"\"프로에 갑니다.\" 목표가 분명해졌다."}]},{"label":"대학 진학도 열어 둔다","outcomes":[{"p":"100%","text":"길이 두 개라고 생각하니 마음이 편해졌다."}]}],"meetB":"3%","meetP":"4%"},{"id":"hs_exam","title":"시험 기간","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"공부도 챙긴다","outcomes":[{"p":"100%","text":"책상 앞에서도 집중력이 길러졌다."}]},{"label":"훈련만 한다","outcomes":[{"p":"64%","text":"아슬아슬하게 낙제를 면했다."},{"p":"36%","text":"성적표를 본 감독에게 크게 혼났다."}]}],"meetB":"3%","meetP":"2%"},{"id":"hs_gear","title":"첫 내 장비","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"비싼 새 장비를 산다","outcomes":[{"p":"100%","text":"손에 착 감긴다. 감각이 살아났다."}]},{"label":"선배에게 물려받는다","outcomes":[{"p":"100%","text":"\"잘 써라.\" 선배의 손때가 묻은 장비가 든든했다."}]}],"meetB":"4%","meetP":"4%"},{"id":"hs_senior_draft","title":"선배의 프로 지명","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"축하 전화하고 조언을 듣는다","outcomes":[{"p":"100%","text":"\"스카우트는 꾸준함을 봐.\" 선배의 말을 수첩에 적었다."}]},{"label":"질 수 없다, 훈련한다","outcomes":[{"p":"100%","text":"현수막을 지날 때마다 이를 악물었다."}]}],"meetB":"3%","meetP":"2%"},{"id":"hs_boosters","title":"학부모 후원회","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"행사에 간다","outcomes":[{"p":"100%","text":"어른들 앞에서 떨리는 목소리로 인사했다. 박수가 쏟아졌다."}]},{"label":"훈련에 집중한다","outcomes":[{"p":"100%","text":"그 시간에 실내 연습장 불을 켰다."}]}],"meetB":"4%","meetP":"4%"},{"id":"hs_vs_pro","title":"프로 2군과 연습경기","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"정면 승부한다","outcomes":[{"p":"55%","text":"프로의 벽은 높았다. 그래도 많이 배웠다."},{"p":"45%","text":"프로 투수의 직구를 받아쳐 2루타! 관계자들이 이름을 물었다."}]},{"label":"배우는 자세로 임한다","outcomes":[{"p":"100%","text":"프로 선수들의 루틴을 눈에 담았다."}]}],"meetB":"3%","meetP":"5%"},{"id":"hs_pitchlimit","title":"투구 수 제한 규정","rare":false,"chain":false,"stages":["hs"],"who":"P","choices":[{"label":"규정에 맞춰 효율을 키운다","outcomes":[{"p":"100%","text":"적은 공으로 아웃을 잡는 법을 익혔다."}]},{"label":"체력으로 버틴다","outcomes":[{"p":"100%","text":"불펜에서 쉬지 않고 몸을 만들었다."}]}],"meetB":"0%","meetP":"3%"},{"id":"hs_position","title":"포지션 변경 제안","rare":false,"chain":false,"stages":["hs"],"who":"B","choices":[{"label":"외야로 간다","outcomes":[{"p":"100%","text":"넓은 외야를 뛰어다니니 발이 더 빨라졌다."}]},{"label":"지금 자리를 지킨다","outcomes":[{"p":"100%","text":"익숙한 자리에서 방망이에 집중했다."}]}],"meetB":"3%","meetP":"0%"},{"id":"hs_jersey","title":"등번호 고르기","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"에이스 번호를 단다","outcomes":[{"p":"100%","text":"등에 무게가 실렸다. 그만큼 책임감도."}]},{"label":"좋아하던 번호를 고른다","outcomes":[{"p":"100%","text":"어릴 적부터 꿈꾸던 번호를 달았다."}]}],"meetB":"4%","meetP":"2%"},{"id":"hs_video","title":"프로 선수 영상 공부","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"그대로 따라 한다","outcomes":[{"p":"51%","text":"따라 하다 보니 내 것이 됐다."},{"p":"49%","text":"몸에 안 맞아 원래대로 돌아왔다."}]},{"label":"장점만 가져온다","outcomes":[{"p":"100%","text":"루틴 하나만 가져와 내 것으로 만들었다."}]}],"meetB":"2%","meetP":"5%"},{"id":"hs_parents","title":"부모님의 걱정","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"꼭 해내겠다고 약속한다","outcomes":[{"p":"100%","text":"\"믿어 주세요.\" 부모님이 조용히 고개를 끄덕이셨다."}]},{"label":"함께 미래를 이야기한다","outcomes":[{"p":"100%","text":"밤늦게까지 이야기했다. 마음이 한결 가벼워졌다."}]}],"meetB":"2%","meetP":"3%"},{"id":"hs_final","title":"전국대회 결승","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"긴장 풀고 즐긴다","outcomes":[{"p":"51%","text":"우승! 헹가래를 받았다."},{"p":"49%","text":"준우승. 그래도 웃으며 메달을 걸었다."}]},{"label":"밤새 상대를 분석한다","outcomes":[{"p":"100%","text":"상대의 버릇을 다 외웠다. 결승에서 그대로 나왔다."}]}],"meetB":"2%","meetP":"1%"},{"id":"hs_rival_school","title":"라이벌 학교 정기전","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"도발에 응한다","outcomes":[{"p":"100%","text":"\"경기장에서 보자.\" 한마디에 학교가 들끓었다."}]},{"label":"경기로 말한다","outcomes":[{"p":"100%","text":"말없이 경기에서 보여 줬다."}]}],"meetB":"3%","meetP":"1%"},{"id":"hs_trip","title":"수학여행","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"수학여행에 간다","outcomes":[{"p":"100%","text":"친구들과 밤새 웃었다. 오랜만에 고등학생이 된 기분이다."}]},{"label":"빠지고 훈련한다","outcomes":[{"p":"100%","text":"텅 빈 운동장에서 혼자 훈련했다."}]}],"meetB":"2%","meetP":"3%"},{"id":"hs_rain","title":"장마로 경기 연기","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"실내에서 훈련한다","outcomes":[{"p":"100%","text":"좁은 실내에서 기본기를 다졌다."}]},{"label":"푹 쉰다","outcomes":[{"p":"100%","text":"오랜만에 늦잠을 잤다. 몸이 가볍다."}]}],"meetB":"2%","meetP":"2%"},{"id":"hs_injuries","title":"부상자 속출","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"무리해서 더 뛴다","outcomes":[{"p":"100%","text":"팀을 위해 몸을 던졌다. 동료들이 고마워했다."}]},{"label":"원래 역할만 한다","outcomes":[{"p":"100%","text":"\"다치면 오래 못 뜁니다.\" 감독도 고개를 끄덕였다."}]}],"meetB":"0.75%","meetP":"0.75%"},{"id":"hs_paper","title":"지역 신문의 내 기사","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"스크랩해 둔다","outcomes":[{"p":"100%","text":"기사를 오려 방 벽에 붙였다. 볼 때마다 힘이 난다."}]},{"label":"신경 쓰지 않는다","outcomes":[{"p":"100%","text":"\"아직 아무것도 한 게 없습니다.\""}]}],"meetB":"2%","meetP":"2%"},{"id":"hs_coach_clash","title":"감독과의 갈등","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"먼저 사과한다","outcomes":[{"p":"100%","text":"감독이 어깨를 두드렸다. \"네 마음 안다.\""}]},{"label":"내 생각을 말한다","outcomes":[{"p":"51%","text":"감독이 내 말을 받아들였다. 원하는 자리에서 뛰게 됐다."},{"p":"49%","text":"괘씸죄로 한 경기 벤치에 앉았다."}]}],"meetB":"3%","meetP":"2%"},{"id":"hs_pcbang","title":"친구들의 유혹","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"오늘만 논다","outcomes":[{"p":"100%","text":"오랜만에 친구들과 실컷 웃었다."}]},{"label":"거절하고 훈련한다","outcomes":[{"p":"100%","text":"\"다음에 꼭 갈게.\" 배트를 들고 운동장으로 갔다."}]}],"meetB":"2%","meetP":"2%"},{"id":"hs_pro_talk","title":"프로 구단 면담","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"적극적으로 어필한다","outcomes":[{"p":"100%","text":"\"저를 뽑으시면 후회 안 하실 겁니다.\" 팀장이 웃었다."}]},{"label":"겸손하게 답한다","outcomes":[{"p":"100%","text":"\"아직 많이 부족합니다.\" 성실하다는 인상을 남겼다."}]}],"meetB":"1%","meetP":"1%"},{"id":"hs_college","title":"대학 감독의 스카우트","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"관심을 보인다","outcomes":[{"p":"100%","text":"보험이 생기니 마음이 편해졌다."}]},{"label":"프로만 본다","outcomes":[{"p":"100%","text":"\"죄송합니다. 프로에 도전하겠습니다.\""}]}],"meetB":"2%","meetP":"3%"},{"id":"hs_heat","title":"폭염 속 경기","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"물 챙기며 버틴다","outcomes":[{"p":"100%","text":"끝까지 그라운드를 지켰다."}]},{"label":"교체를 요청한다","outcomes":[{"p":"100%","text":"무리하지 않았다. 다음 경기를 위해서."}]}],"meetB":"3%","meetP":"0.75%"},{"id":"hs_cheer","title":"전교생 응원","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"응원석에 인사한다","outcomes":[{"p":"100%","text":"응원가가 더 커졌다. 그날 몸이 날아다녔다."}]},{"label":"경기에만 집중한다","outcomes":[{"p":"100%","text":"함성은 들리지 않았다. 공만 보였다."}]}],"meetB":"2%","meetP":"3%"},{"id":"hs_ball","title":"기념구","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"부모님께 드린다","outcomes":[{"p":"100%","text":"부모님이 공을 장식장 맨 앞에 올려 두셨다."}]},{"label":"학교에 기증한다","outcomes":[{"p":"100%","text":"야구부 진열장에 내 이름이 적힌 공이 놓였다."}]}],"meetB":"2%","meetP":"1%"},{"id":"mn_winter","title":"윈터리그 제안","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"간다","outcomes":[{"p":"100%","text":"낯선 땅에서 매일 경기를 뛰며 실전 감각을 키웠다."}]},{"label":"쉰다","outcomes":[{"p":"100%","text":"몸을 회복하는 데 집중했다."}]}],"meetB":"9%","meetP":"10%"},{"id":"mn_camp_list","title":"스프링캠프 초청 명단","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"첫날부터 다 보여 준다","outcomes":[{"p":"56%","text":"감독이 \"저 친구 누구야?\"라고 물었다."},{"p":"44%","text":"너무 힘이 들어가 어깨가 뭉쳤다."}]},{"label":"내 페이스대로 한다","outcomes":[{"p":"100%","text":"차분히 준비한 대로 보여 줬다."}]}],"meetB":"11%","meetP":"11%"},{"id":"mn_weight","title":"체중 감량 지시","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"따른다","outcomes":[{"p":"100%","text":"몸이 가벼워지니 움직임이 빨라졌다."}]},{"label":"힘을 지키려 거부한다","outcomes":[{"p":"100%","text":"\"이 무게가 제 힘입니다.\""}]}],"meetB":"9%","meetP":"10%"},{"id":"mn_roommate","title":"외국인 룸메이트","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"먼저 친해진다","outcomes":[{"p":"100%","text":"번역기로 수다를 떨다 친구가 됐다. 그의 훈련법도 배웠다."}]},{"label":"각자 생활한다","outcomes":[{"p":"100%","text":"조용히 내 훈련에 집중했다."}]}],"meetB":"11%","meetP":"13%"},{"id":"mn_gear_cut","title":"장비 지원 축소","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"좋은 장비를 산다","outcomes":[{"p":"100%","text":"좋은 장비가 손에 붙었다."}]},{"label":"쓰던 걸 고쳐 쓴다","outcomes":[{"p":"100%","text":"테이프를 감아 가며 버텼다."}]}],"meetB":"11%","meetP":"12%"},{"id":"mn_goal","title":"올해의 목표","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"\"1군 개막전\"이라고 쓴다","outcomes":[{"p":"100%","text":"목표를 사물함에 붙였다."}]},{"label":"\"다치지 않기\"라고 쓴다","outcomes":[{"p":"100%","text":"꾸준함이 먼저다."}]}],"meetB":"9%","meetP":"7%"},{"id":"mn_scout_report","title":"스카우팅 리포트 유출","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"약점을 파고든다","outcomes":[{"p":"100%","text":"그 한 줄을 지우려고 겨우내 매달렸다."}]},{"label":"장점을 더 키운다","outcomes":[{"p":"100%","text":"\"약점보다 무기가 중요해.\""}]}],"meetB":"9%","meetP":"13%"},{"id":"mn_callwait","title":"콜업 대기","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"짐을 싸 두고 기다린다","outcomes":[{"p":"100%","text":"전화기를 손에서 놓지 못했다."}]},{"label":"신경 끄고 집중한다","outcomes":[{"p":"100%","text":"오늘 경기에만 집중했다."}]}],"meetB":"7%","meetP":"9%"},{"id":"mn_oneday","title":"하루짜리 대체 콜업","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"모든 걸 건다","outcomes":[{"p":"55%","text":"아쉽게 끝났다. 그래도 1군의 공기를 맡았다."},{"p":"45%","text":"대타 적시타! 더그아웃이 들썩였다."}]},{"label":"경험으로 즐긴다","outcomes":[{"p":"100%","text":"1군 선수들의 준비 과정을 눈에 담았다."}]}],"meetB":"5%","meetP":"5%"},{"id":"mn_daygame","title":"땡볕 낮 경기","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"버틴다","outcomes":[{"p":"100%","text":"땀을 한 바가지 흘렸다."}]},{"label":"루틴을 조절한다","outcomes":[{"p":"100%","text":"훈련량을 줄이고 경기에 힘을 아꼈다."}]}],"meetB":"6%","meetP":"9%"},{"id":"mn_lowpay","title":"박봉 버티기","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"레슨 아르바이트를 한다","outcomes":[{"p":"100%","text":"주말마다 아이들에게 야구를 가르쳤다."}]},{"label":"아껴 쓴다","outcomes":[{"p":"100%","text":"라면으로 버티며 훈련에 매달렸다."}]}],"meetB":"6%","meetP":"7%"},{"id":"mn_indie","title":"독립리그 제안","rare":true,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"남는다","outcomes":[{"p":"100%","text":"\"여기서 꼭 올라가겠습니다.\""}]},{"label":"마음이 흔들린다","outcomes":[{"p":"100%","text":"고민 끝에 남았다. 대신 독하게 훈련했다."}]}],"meetB":"3%","meetP":"2%"},{"id":"mn_rehab_mate","title":"재활 선수 룸메이트","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"같이 재활 운동을 한다","outcomes":[{"p":"100%","text":"스타의 몸 관리 비법을 배웠다."}]},{"label":"내 훈련만 한다","outcomes":[{"p":"100%","text":"각자의 길을 갔다."}]}],"meetB":"7%","meetP":"4%"},{"id":"mn_role","title":"포지션 변경 제안","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"받아들인다","outcomes":[{"p":"100%","text":"새 역할에 맞춰 힘을 키웠다."}]},{"label":"지금 자리를 지킨다","outcomes":[{"p":"100%","text":"\"제 자리에서 증명하겠습니다.\""}]}],"meetB":"5%","meetP":"7%"},{"id":"mn_empty","title":"텅 빈 관중석","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"혼자라도 최선을 다한다","outcomes":[{"p":"100%","text":"맨 앞줄 할아버지 팬이 박수를 쳐 줬다."}]},{"label":"대충 넘긴다","outcomes":[{"p":"100%","text":"힘을 아꼈다."}]}],"meetB":"8%","meetP":"6%"},{"id":"mn_release","title":"동기의 방출","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"위로하러 간다","outcomes":[{"p":"100%","text":"밤새 이야기를 들어 줬다. \"넌 꼭 1군 가라.\""}]},{"label":"더 독하게 훈련한다","outcomes":[{"p":"100%","text":"\"나는 저렇게 안 된다.\" 새벽까지 훈련했다."}]}],"meetB":"7%","meetP":"6%"},{"id":"mn_rehab_game","title":"1군 스타와 맞대결","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"전력으로 붙는다","outcomes":[{"p":"60%","text":"역시 1군은 달랐다."},{"p":"40%","text":"에이스의 직구를 담장 너머로 보냈다! 코칭스태프가 수첩을 꺼냈다."}]},{"label":"한 수 배운다","outcomes":[{"p":"100%","text":"경기 뒤 찾아가 조언을 구했다. 친절하게 알려 줬다."}]}],"meetB":"7%","meetP":"8%"},{"id":"t_allstar_vote","title":"올스타 팬 투표","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"SNS로 투표를 독려한다","outcomes":[{"p":"51%","text":"역전 1위! 올스타 베스트로 뽑혔다."},{"p":"49%","text":"아쉽게 2위. 그래도 팬들이 많이 움직였다."}]},{"label":"조용히 기다린다","outcomes":[{"p":"100%","text":"결과는 팬들에게 맡겼다."}]}],"meetB":"19%","meetP":"16%"},{"id":"t_derby","title":"올스타 이벤트 초청","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"나간다","outcomes":[{"p":"64%","text":"우승은 놓쳤지만 축제를 즐겼다."},{"p":"36%","text":"홈런 더비 우승! 마지막 한 방이 장외로 날아갔다."}]},{"label":"쉬겠다고 한다","outcomes":[{"p":"100%","text":"후반기를 위해 쉬었다."}]}],"meetB":"16%","meetP":"14%"},{"id":"t_walkoff","title":"끝내기 세리머니","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"B","choices":[{"label":"화끈하게 한다","outcomes":[{"p":"100%","text":"물세례 세리머니 영상이 하루 종일 화제가 됐다."}]},{"label":"조심스럽게 한다","outcomes":[{"p":"100%","text":"하이파이브로 짧게 마무리했다."}]}],"meetB":"19%","meetP":"0%"},{"id":"t_signing","title":"팬 사인회","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"마지막 팬까지 다 해 준다","outcomes":[{"p":"100%","text":"세 시간 넘게 사인을 했다. 팔이 아프지만 뿌듯하다."}]},{"label":"시간 맞춰 끝낸다","outcomes":[{"p":"100%","text":"정해진 시간만큼 정성껏 했다."}]}],"meetB":"21%","meetP":"15%"},{"id":"t_mascot","title":"마스코트 퍼포먼스","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"같이 춤춘다","outcomes":[{"p":"100%","text":"어설픈 춤이 오히려 화제가 됐다."}]},{"label":"사양한다","outcomes":[{"p":"100%","text":"\"춤은 정말 자신이 없습니다.\""}]}],"meetB":"23%","meetP":"15%"},{"id":"t_salary_fight","title":"연봉 협상 장기전","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"버틴다","outcomes":[{"p":"51%","text":"구단이 한발 물러섰다."},{"p":"49%","text":"협상이 길어져 캠프에 늦게 합류했다."}]},{"label":"빨리 도장을 찍는다","outcomes":[{"p":"100%","text":"돈보다 준비가 먼저다."}]}],"meetB":"23%","meetP":"21%"},{"id":"t_rookie_rival","title":"거물 신인의 등장","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"정면으로 경쟁한다","outcomes":[{"p":"100%","text":"\"자리는 실력으로 지키는 겁니다.\""}]},{"label":"먼저 손을 내민다","outcomes":[{"p":"100%","text":"신인에게 밥을 샀다. 더그아웃 분위기가 좋아졌다."}]}],"meetB":"27%","meetP":"20%"},{"id":"t_cf","title":"광고 모델 제안","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"찍는다","outcomes":[{"p":"100%","text":"광고가 TV에 나오자 아이들이 따라 했다."}]},{"label":"훈련을 택한다","outcomes":[{"p":"100%","text":"\"시즌 끝나고 이야기하시죠.\""}]}],"meetB":"26%","meetP":"23%"},{"id":"t_bench_clear","title":"벤치 클리어링","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"물러서지 않는다","outcomes":[{"p":"51%","text":"퇴장에 출장 정지까지 받았다. 그래도 동료들은 내 편이다."},{"p":"49%","text":"팀이 하나로 뭉쳤다."}]},{"label":"말리러 나선다","outcomes":[{"p":"100%","text":"먼저 사과하고 상황을 정리했다. 성숙하다는 평을 들었다."}]}],"meetB":"22%","meetP":"17%"},{"id":"t_milestone_ball","title":"기념구를 잡은 관중","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"유니폼과 바꾼다","outcomes":[{"p":"100%","text":"관중과 기념사진까지 찍었다."}]},{"label":"그냥 기념으로 드린다","outcomes":[{"p":"100%","text":"\"그 공은 당신 겁니다.\" 훈훈한 기사가 났다."}]}],"meetB":"18%","meetP":"16%"},{"id":"t_rain_delay","title":"우천 중단 2시간","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"실내에서 몸을 계속 푼다","outcomes":[{"p":"100%","text":"재개되자마자 바로 경기에 들어갔다."}]},{"label":"방수포 슬라이딩 쇼","outcomes":[{"p":"79%","text":"관중석이 웃음바다가 됐다."},{"p":"21%","text":"관중은 환호했지만 무릎이 까졌다."}]}],"meetB":"18%","meetP":"15%"},{"id":"t_trade_deadline","title":"트레이드 마감일","rare":true,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"남겠다고 한다","outcomes":[{"p":"100%","text":"팬들이 \"의리\"라며 내 이름을 연호했다."}]},{"label":"구단 결정에 따른다","outcomes":[{"p":"100%","text":"결국 트레이드는 없었다. 마음은 편해졌다."}]}],"meetB":"5%","meetP":"5%"},{"id":"t_kid_hospital","title":"어린이 병원 방문","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"간다","outcomes":[{"p":"100%","text":"아이들의 웃음에 오히려 힘을 얻었다."}]},{"label":"사인볼만 보낸다","outcomes":[{"p":"100%","text":"사인볼 50개를 보냈다."}]}],"meetB":"31%","meetP":"32%"},{"id":"t_new_stadium","title":"새 구장 개장","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"구장에 맞춰 바꾼다","outcomes":[{"p":"100%","text":"새 구장에 맞춘 야구를 준비했다."}]},{"label":"내 야구를 한다","outcomes":[{"p":"100%","text":"구장은 바뀌어도 야구는 같다."}]}],"meetB":"32%","meetP":"30%"},{"id":"t_doc","title":"다큐멘터리 촬영","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"촬영한다","outcomes":[{"p":"100%","text":"카메라가 늘 따라다닌다. 방송 후 팬이 크게 늘었다."}]},{"label":"거절한다","outcomes":[{"p":"100%","text":"야구에만 집중하고 싶다."}]}],"meetB":"23%","meetP":"19%"}]}; })(typeof window !== 'undefined' ? window : globalThis);
+(function (g) { (g.BB = g.BB || {}).ODDS = {"generated":"2026-11-22","careers":400,"sections":[{"title":"커리어 · 타자","note":"보통 실력으로 처음부터 끝까지 400명을 시뮬레이션한 결과입니다. 훈련·승부처 성공률은 사람마다 다르게(35~95%) 두었고, 해외 제안은 절반쯤 받아들였습니다. 직접 잘하면 확률이 올라갑니다.","rows":[["드래프트 1라운드 지명","8.8%"],["드래프트 2라운드 지명","7.8%"],["드래프트 3라운드 지명","10.3%"],["드래프트 4~10라운드 지명","73.3%"],["미지명 → 육성선수","0.0%"],["1군(KBO·NPB·MLB) 데뷔","80.5%","평균 21.8세"],["주전(선발·마무리) 한 번 이상","79.5%"],["FA 자격","78.0%"],["일본 구단의 제안을 받음","67.0%"],["메이저리그 구단의 제안을 받음","51.5%"],["일본에서 뜀","41.5%"],["메이저리그에서 뜀","24.0%"],["방출로 끝남","20.0%"],["큰 부상(수술) 한 번 이상","43.8%"],["각성(잠재력 +8) 한 번 이상","37.0%"],["성장 정체(잠재력 −6) 한 번 이상","44.3%"],["가을야구 한 번 이상","80.5%"],["우승(한국·일본·월드시리즈) 한 번 이상","65.8%"],["국가대표 한 번 이상","67.0%"],["국제대회 우승·금메달","49.3%"],["결혼","11.5%"],["아이가 생김","9.5%"],["아이가 야구를 함(야구인 2세)","0.25%"],["은퇴 나이(평균)","34.3세"]]},{"title":"명예의 전당 등급 · 타자","note":"은퇴할 때 받는 등급의 분포","rows":[["전설","10.8%","1500점 이상"],["명예의 전당","45.0%","900점 이상"],["프랜차이즈 스타","23.8%","520점 이상"],["성실한 프로","1.0%","220점 이상"],["아쉬운 커리어","19.5%","0점 이상"]]},{"title":"수상·기록 · 타자","note":"커리어에서 한 번 이상 받을(달성할) 확률","rows":[["올스타","80.3%"],["국가대표","65.0%"],["한국시리즈 우승","62.5%"],["골든글러브","44.3%"],["NPB 올스타","36.8%"],["한국시리즈 MVP","36.8%"],["MLB 올스타","23.3%"],["타격왕","23.0%"],["MVP","22.0%"],["아시안게임 금메달","17.5%"],["신인왕","17.5%"],["일본시리즈 우승","14.0%"],["프리미어12 준우승","13.0%"],["WBC 준우승","12.3%"],["올림픽 금메달","12.3%"],["베스트 나인","11.0%"],["WBC 우승","10.5%"],["프리미어12 우승","10.3%"],["올림픽 은메달","8.8%"],["퓨처스 타격왕","8.5%"],["올림픽 동메달","7.5%"],["올해의 신인","6.8%"],["NPB 타격왕","6.5%"],["아시안게임 은메달","6.3%"],["청소년 국가대표","6.3%"],["NPB MVP","5.8%"],["일본시리즈 MVP","5.8%"],["홈런왕","4.3%"],["퓨처스 홈런왕","4.3%"],["월드시리즈 우승","3.5%"],["U-18 야구 월드컵 우승","2.3%"],["실버슬러거","2.0%"],["트리플A 올스타","1.8%"],["타점왕","1.8%"],["U-18 야구 월드컵 준우승","1.8%"],["월드시리즈 MVP","1.5%"],["고교 홈런왕","1.5%"],["APBC 우승","1.5%"],["MLB 타격왕","1.0%"],["고교 타격왕","1.0%"],["APBC 준우승","0.75%"],["NPB 타점왕","0.75%"],["NPB 홈런왕","0.25%"],["통산 100안타 달성","80.5%"],["통산 500안타 달성","80.5%"],["통산 50홈런 달성","80.5%"],["통산 100홈런 달성","77.0%"],["통산 1,000안타 달성","76.0%"],["통산 500타점 달성","75.8%"],["통산 1,500안타 달성","48.3%"],["통산 200홈런 달성","34.8%"],["통산 100도루 달성","29.8%"],["통산 1,000타점 달성","17.3%"],["통산 2,000안타 달성","16.5%"],["통산 300홈런 달성","8.0%"],["통산 200도루 달성","3.3%"],["통산 2,500안타 달성","2.3%"],["통산 400홈런 달성","0.75%"],["통산 1,500타점 달성","0.25%"]]},{"title":"커리어 · 투수","note":"보통 실력으로 처음부터 끝까지 400명을 시뮬레이션한 결과입니다. 훈련·승부처 성공률은 사람마다 다르게(35~95%) 두었고, 해외 제안은 절반쯤 받아들였습니다. 직접 잘하면 확률이 올라갑니다.","rows":[["드래프트 1라운드 지명","10.0%"],["드래프트 2라운드 지명","8.3%"],["드래프트 3라운드 지명","18.3%"],["드래프트 4~10라운드 지명","63.2%"],["미지명 → 육성선수","0.25%"],["1군(KBO·NPB·MLB) 데뷔","76.3%","평균 21.9세"],["주전(선발·마무리) 한 번 이상","76.3%"],["FA 자격","68.0%"],["일본 구단의 제안을 받음","73.3%"],["메이저리그 구단의 제안을 받음","53.0%"],["일본에서 뜀","54.0%"],["메이저리그에서 뜀","27.5%"],["방출로 끝남","25.0%"],["큰 부상(수술) 한 번 이상","43.0%"],["각성(잠재력 +8) 한 번 이상","39.5%"],["성장 정체(잠재력 −6) 한 번 이상","42.3%"],["가을야구 한 번 이상","76.3%"],["우승(한국·일본·월드시리즈) 한 번 이상","61.0%"],["국가대표 한 번 이상","68.0%"],["국제대회 우승·금메달","48.5%"],["결혼","9.8%"],["아이가 생김","8.5%"],["아이가 야구를 함(야구인 2세)","0.50%"],["은퇴 나이(평균)","32.9세"]]},{"title":"명예의 전당 등급 · 투수","note":"은퇴할 때 받는 등급의 분포","rows":[["전설","4.3%","1500점 이상"],["명예의 전당","37.3%","900점 이상"],["프랜차이즈 스타","32.0%","520점 이상"],["성실한 프로","2.8%","220점 이상"],["아쉬운 커리어","23.8%","0점 이상"]]},{"title":"수상·기록 · 투수","note":"커리어에서 한 번 이상 받을(달성할) 확률","rows":[["올스타","68.0%"],["국가대표","67.0%"],["한국시리즈 우승","52.3%"],["탈삼진왕","48.8%"],["NPB 올스타","46.0%"],["한국시리즈 MVP","28.5%"],["MLB 올스타","25.5%"],["NPB 탈삼진왕","24.5%"],["일본시리즈 우승","20.5%"],["골든글러브","19.8%"],["평균자책점왕","18.3%"],["WBC 준우승","15.3%"],["올림픽 금메달","15.0%"],["올림픽 은메달","14.8%"],["프리미어12 준우승","14.2%"],["프리미어12 우승","14.0%"],["WBC 우승","14.0%"],["세이브왕","11.0%"],["아시안게임 금메달","9.3%"],["올해의 신인","8.8%"],["올림픽 동메달","8.5%"],["신인왕","8.3%"],["NPB 세이브왕","8.0%"],["일본시리즈 MVP","8.0%"],["월드시리즈 우승","5.3%"],["NPB 평균자책점왕","5.3%"],["MLB 평균자책점왕","4.8%"],["NPB 다승왕","4.5%"],["청소년 국가대표","3.8%"],["트리플A 올스타","3.8%"],["MLB 탈삼진왕","3.5%"],["아시안게임 은메달","3.3%"],["사이영상","3.0%"],["MLB 다승왕","3.0%"],["사와무라상","2.8%"],["다승왕","2.5%"],["월드시리즈 MVP","2.3%"],["APBC 준우승","2.0%"],["MLB 세이브왕","1.5%"],["U-18 야구 월드컵 우승","1.5%"],["고교 최우수 투수","1.3%"],["APBC 우승","1.0%"],["U-18 야구 월드컵 준우승","1.0%"],["통산 500탈삼진 달성","76.3%"],["통산 50승 달성","73.8%"],["통산 1,000탈삼진 달성","69.3%"],["통산 1,500탈삼진 달성","43.8%"],["통산 100승 달성","41.0%"],["통산 2,000탈삼진 달성","21.3%"],["통산 100세이브 달성","18.5%"],["통산 150승 달성","10.8%"],["통산 200세이브 달성","9.0%"],["통산 2,500탈삼진 달성","7.5%"],["통산 300세이브 달성","2.5%"],["통산 3,000탈삼진 달성","2.0%"],["통산 400세이브 달성","1.0%"],["통산 200승 달성","0.50%"]]},{"title":"시즌마다","note":"1군 무대(KBO·NPB·MLB) 한 시즌 기준","rows":[["가을야구 진출","50.4%","KBO 5위·NPB 리그 3위·MLB 6위까지"],["우승","11.5%"],["국가대표 발탁","16.6%","대회가 있는 해(4년 중 3년)만"],["이벤트 발생(시즌 전)","KBO 45% · 해외 60%","고를 이벤트가 남아 있을 때"],["이벤트 발생(시즌 중)","KBO 30% · 해외 45%"],["이어지는 이야기(예약된 이벤트)","100%","정해진 시즌이 되면 반드시"],["같은 이벤트 다시 보기","한 번뿐","슬럼프·허리 통증·오심 등 몇 개만 4~6시즌 뒤에"]]},{"title":"집안 환경","note":"새 선수를 만들 때 랜덤으로 정해집니다. 은퇴한 선수의 아이가 야구를 했다면 \"야구인 2세\"를 직접 고를 수 있습니다.","rows":[["평범한 회사원 집","55%","아버지는 회사원, 어머니는 분식집. 늘 응원해 주는 가족"],["어려운 형편","20%","부모님 빚 5,000만 원. 헝그리 정신으로 훈련 효과 +15%"],["야구인 집안","13%","아버지가 전직 프로야구 선수. 능력치 두 개 +2, 인기 +10"],["부잣집","12%","시작 자산 5억. 부족함 없이 자라 훈련 효과 −8%"]]},{"title":"운","note":"시즌이 끝날 때","rows":[["운이 따른 시즌(빗맞아도 안타)","13.6%","시즌 운 1.1σ 이상"],["불운한 시즌(잘 맞아도 정면)","13.6%"],["각성(잠재력 +8)","7%","26세 이하"],["성장 정체(잠재력 −6)","8%","26세 이하"],["큰 부상(수술)","3% · 30세부터 5%","고교 제외"],["실전 활약 성장(잠재력 +2~3)","OPS .850 이상이면 100%","33세 이하"],["방출","2군 4시즌째 승격 실패 · 30세 이상 1군 OPS .620 미만","조건이 되면 100%"],["드래프트","성적·능력치·승부처 + 스카우트의 눈(±7점)","11라운드 밖이면 육성선수"],["2군 → 1군 승격","OPS .820 이상 + 평균 능력치 50 → 100%","못 미쳐도 OPS .740 이상이면 30%"]]},{"title":"수상(조건을 넘었을 때)","note":"기준을 넘으면 받는 확률. 리그 1위 기준은 해마다 조금씩 다릅니다.","rows":[["신인왕","85%","첫 1군 시즌 OPS .780 이상, 200타석"],["골든글러브","70% (OPS .970 이상이면 100%)","주전 OPS .900 이상"],["KBO MVP","70%","OPS 1.000 이상 + 30홈런 또는 타율 .340"],["MLB MVP","60%","OPS 1.000 이상 + 40홈런 또는 타율 .330"],["NPB MVP","60%","OPS .980 이상"],["사이영상","60%","MLB 선발 평균자책점 2.60 이하, 170이닝"],["사와무라상","60%","NPB 선발 평균자책점 2.20 이하, 170이닝"],["투수 골든글러브","70%","KBO 선발 평균자책점 2.70 이하, 150이닝"]]},{"title":"가을야구·국가대표 경기","note":"결정적 순간(직접 치는 한 타석·이닝)의 결과에 따라","rows":[["첫 시리즈 승리","성공 70% · 절반 45% · 실패 20%"],["다음 시리즈 승리","43~55%","1·2위 팀이면 +5%"],["KBO 우승 보너스","5,000만 원","NPB 8,000만 · MLB 2억"],["WBC 우승","성공 30% · 실패 5%","우승 못 하면 준우승 35%"],["아시안게임 금메달","성공 60% · 실패 30%","금메달이면 병역 특례"],["프리미어12 우승","성공 35% · 실패 10%"],["올림픽 금메달","성공 35% · 실패 10%","금 못 따면 은 35% · 그다음 동 40% · 메달이면 병역 특례"],["APBC 우승","성공 50% · 실패 25%","만 24세 이하 국내·일본 선수, 큰 대회에 못 뽑힌 해"],["U-18 야구 월드컵 우승","성공 45% · 실패 20%","고교 2·3학년 나이, 최상위 성적"],["한국시리즈 MVP","우승 + 결정적 순간 성공이면 50%"]]},{"title":"은퇴 후의 삶","note":"은퇴 후 한 직업을 65세까지(해마다 방향은 무작위로) 100번씩 해 본 결과. 칭호 확률과 최고 단계 도달률","rows":[["지도자: 우승 감독·전설의 감독","67%","최고 단계(단장) 46% · 65세 평균 순자산 80억 3,238만"],["해설위원: 국민 해설위원","33%","최고 단계(국민 해설위원) 33% · 65세 평균 순자산 60억 9,484만"],["스카우트: 명스카우트","49%","최고 단계(단장) 64% · 65세 평균 순자산 53억 2,489만"],["야구 아카데미: 아카데미의 아버지","40%","최고 단계(전국 아카데미 체인) 52% · 65세 평균 순자산 33억 6,528만"],["사업: 사업왕","31%","최고 단계(프랜차이즈) 31% · 65세 평균 순자산 11억 1,437만"],["방송인·유튜버: 100만 유튜버","52%","최고 단계(예능 고정 출연) 26% · 65세 평균 순자산 31억 8,239만"]]},{"title":"수비","note":"내야 땅볼(주력 50) 기준","rows":[["병살(1루 주자, 2아웃 전)","40.5%"],["포스 아웃만(타자는 1루 세이프)","52.0%"],["내야안타","7.5%"],["1루수가 직접 베이스를 밟음","18.7%"],["투수가 1루 커버","5.7%"],["다이빙 캐치 시도","내야 40% · 외야 45%","닿을 듯 말 듯한 공"]]},{"title":"투수 모드","note":"능력치 60 투수가 포수 사인대로 제구 미터를 잘 맞혀 던질 때(타석당)","rows":[["2군 타자 상대","피안타율 0.171","삼진 26% · 볼넷 2% · 피홈런 0.67%"],["KBO 1군 타자 상대","피안타율 0.223","삼진 19% · 볼넷 2% · 피홈런 1%"],["NPB 타자 상대","피안타율 0.228","삼진 16% · 볼넷 2% · 피홈런 2%"],["MLB 타자 상대","피안타율 0.255","삼진 15% · 볼넷 2% · 피홈런 1%"],["포수 사인대로 던지기","제구 오차 −25%","타자도 조금 더 속는다"],["같은 손 타자","타자 실력 −4","반대 손이면 +2"]]},{"title":"게스 히팅","note":"투구 전에 예측한 칸(4칸 중 하나)","rows":[["적중하면","정타 범위 +5° · 잘 맞은 범위 +8° · 높이 허용 +3.5cm · 변화구 끝까지 보임","도착 위치와 볼·스트라이크 표시"],["빗나가면","정타 범위 −2° · 높이 허용 −1cm"],["적중 판정","칸 안쪽 경계는 3.5cm, 바깥쪽 방향은 존 밖 30cm까지"]]},{"title":"내 인생 · 시세","note":"한 시즌 뒤 값이 오를 확률과 평균 변화(정규분포)","rows":[["원룸 전세","오를 확률 84%","평균 +1% · 흔들림 ±1%"],["수도권 아파트","오를 확률 72%","평균 +4% · 흔들림 ±7%"],["서울 아파트","오를 확률 73%","평균 +5% · 흔들림 ±8%"],["한강뷰 아파트","오를 확률 71%","평균 +5% · 흔들림 ±9%"],["정원 딸린 단독주택","오를 확률 72%","평균 +4% · 흔들림 ±7%"],["초고층 펜트하우스","오를 확률 66%","평균 +4% · 흔들림 ±10%"],["도쿄 고급 맨션","오를 확률 66%","평균 +2% · 흔들림 ±5%"],["LA 해변 별장","오를 확률 67%","평균 +3% · 흔들림 ±7%"],["경차","오를 확률 0.00%","평균 -12% · 흔들림 ±3%"],["국산 SUV","오를 확률 0.00%","평균 -12% · 흔들림 ±3%"],["수입 고급 세단","오를 확률 0.02%","평균 -14% · 흔들림 ±4%"],["스포츠카","오를 확률 0.26%","평균 -14% · 흔들림 ±5%"],["슈퍼카","오를 확률 5%","평균 -10% · 흔들림 ±6%"],["한정판 하이퍼카","오를 확률 60%","평균 +2% · 흔들림 ±8%"],["명품 시계","오를 확률 63%","평균 +1% · 흔들림 ±3%"],["한정판 시계","오를 확률 77%","평균 +6% · 흔들림 ±8%"],["현대 미술 작품","오를 확률 62%","평균 +6% · 흔들림 ±20%"],["요트","오를 확률 2%","평균 -8% · 흔들림 ±4%"],["개인 전용기","오를 확률 2%","평균 -6% · 흔들림 ±3%"]]}],"events":[{"id":"form","title":"타격 폼 교정","rare":false,"chain":false,"stages":["hs","farm"],"who":"B","choices":[{"label":"새 폼에 도전한다","outcomes":[{"p":"61%","text":"새 폼이 몸에 붙었다. 타구에 힘이 실린다."},{"p":"39%","text":"타이밍이 자꾸 늦었다. 아직은 몸에 맞지 않는다."}]},{"label":"지금 폼을 지킨다","outcomes":[{"p":"100%","text":"익숙한 폼으로 감각을 다듬었다."}]}],"meetB":"13%","meetP":"0%"},{"id":"scout","title":"관중석의 스카우트","rare":false,"chain":false,"stages":["hs"],"who":"B","choices":[{"label":"힘껏 휘둘러 보여 준다","outcomes":[{"p":"100%","text":"큰 스윙으로 눈도장을 찍었다."}]},{"label":"평소대로 친다","outcomes":[{"p":"100%","text":"흔들리지 않고 내 야구를 했다."}]}],"meetB":"2%","meetP":"0%"},{"id":"slump","title":"슬럼프","rare":false,"chain":false,"stages":["farm","kbo","mlb","aaa","npb"],"who":"B","choices":[{"label":"타이밍을 앞당겨 강하게 친다","outcomes":[{"p":"100%","text":"강한 타구가 돌아왔다. 헛스윙도 조금 늘었다."}]},{"label":"밀어치기로 감을 찾는다","outcomes":[{"p":"100%","text":"반대쪽으로 가볍게 치며 감을 되찾았다."}]},{"label":"하루 쉬며 영상을 본다","outcomes":[{"p":"100%","text":"머리를 비우고 내 타석을 다시 봤다."}]}],"meetB":"23%","meetP":"0%"},{"id":"back","title":"허리 통증","rare":false,"chain":false,"stages":["hs","farm","kbo","mlb","aaa","npb"],"who":"","choices":[{"label":"참고 뛴다","outcomes":[{"p":"64%","text":"통증을 참고 버텼다. 몸이 무겁다."},{"p":"36%","text":"결국 허리를 다쳤다. 시즌 일부를 결장한다."}]},{"label":"일주일 쉰다","outcomes":[{"p":"100%","text":"푹 쉬고 돌아왔다. 몸이 가볍다."}]}],"meetB":"27%","meetP":"23%"},{"id":"extra","title":"특타 제안","rare":false,"chain":false,"stages":["hs","farm","kbo","mlb","aaa","npb"],"who":"B","choices":[{"label":"특타를 받는다","outcomes":[{"p":"100%","text":"파워을(를) 집중적으로 다듬었다."}]},{"label":"푹 쉰다","outcomes":[{"p":"100%","text":"충분히 쉬고 시즌을 맞았다."}]}],"meetB":"42%","meetP":"0%"},{"id":"veteran","title":"선배의 조언","rare":false,"chain":false,"stages":["farm","kbo","aaa","npb"],"who":"B","choices":[{"label":"배운다","outcomes":[{"p":"100%","text":"노릴 공과 버릴 공이 구분되기 시작했다."}]},{"label":"내 방식대로 간다","outcomes":[{"p":"100%","text":"내 스윙을 믿고 밀고 나갔다."}]}],"meetB":"36%","meetP":"0%"},{"id":"interview","title":"방송 인터뷰","rare":false,"chain":false,"stages":["farm","kbo","mlb","npb"],"who":"","choices":[{"label":"자신 있게 말한다","outcomes":[{"p":"100%","text":"\"다음 타석도 기대해 주세요.\" 팬들이 환호했다."}]},{"label":"짧게 끝내고 쉰다","outcomes":[{"p":"100%","text":"조용히 다음 경기를 준비했다."}]}],"meetB":"23%","meetP":"20%"},{"id":"night","title":"원정 숙소의 밤","rare":false,"chain":false,"stages":["kbo","mlb","npb"],"who":"","choices":[{"label":"함께 어울린다","outcomes":[{"p":"100%","text":"동료들과 가까워졌다. 다음 날 몸은 무거웠다."}]},{"label":"일찍 잔다","outcomes":[{"p":"100%","text":"푹 자고 개운하게 일어났다."}]}],"meetB":"19%","meetP":"14%"},{"id":"rival","title":"주전 경쟁","rare":false,"chain":false,"stages":["kbo"],"who":"","choices":[{"label":"훈련량을 늘린다","outcomes":[{"p":"100%","text":"누구보다 일찍 나와 방망이를 돌렸다."}]},{"label":"실전에서 보여 준다","outcomes":[{"p":"100%","text":"결정적인 순간에 증명하기로 했다. 승부처 정타 범위가 넓어진다."}]}],"meetB":"29%","meetP":"23%"},{"id":"trade","title":"트레이드 소문","rare":true,"chain":false,"stages":["kbo"],"who":"","choices":[{"label":"이적을 받아들인다","outcomes":[{"p":"100%","text":"시즌이 끝나면 ○○ 구단으로 옮긴다. 다음 시즌 주전으로 뛴다."}]},{"label":"남겠다고 말한다","outcomes":[{"p":"100%","text":"\"이 팀에서 끝까지 하겠습니다.\" 팬들이 감동했다."}]}],"meetB":"6%","meetP":"5%"},{"id":"language","title":"언어의 벽","rare":false,"chain":false,"stages":["mlb","aaa"],"who":"","choices":[{"label":"영어 과외를 받는다","outcomes":[{"p":"100%","text":"매일 밤 영어 공부를 했다. 동료들과 말이 통하기 시작한다. (−2,000만)"}]},{"label":"통역에게 의지한다","outcomes":[{"p":"100%","text":"통역 덕분에 마음은 편하지만 동료들과는 거리가 있다."}]}],"meetB":"14%","meetP":"20%"},{"id":"travel","title":"서부 원정 10연전","rare":false,"chain":false,"stages":["mlb"],"who":"","choices":[{"label":"그냥 버틴다","outcomes":[{"p":"100%","text":"눈이 감긴 채로 타석에 섰다."}]},{"label":"전담 트레이너를 쓴다","outcomes":[{"p":"100%","text":"수면과 식단을 관리받으며 버텼다. (−1,500만)"}]}],"meetB":"5%","meetP":"12%"},{"id":"bench","title":"감독의 불신","rare":false,"chain":false,"stages":["mlb"],"who":"B","choices":[{"label":"묵묵히 훈련한다","outcomes":[{"p":"100%","text":"경기 전 가장 먼저 나와 배팅 케이지에 섰다."}]},{"label":"감독실 문을 두드린다","outcomes":[{"p":"51%","text":"\"그 배짱이 마음에 든다.\" 다음 날 선발 명단에 이름이 올랐다."},{"p":"49%","text":"감독의 표정이 굳었다. 한동안 대타로만 나간다."}]}],"meetB":"6%","meetP":"0%"},{"id":"press","title":"현지 언론의 혹평","rare":false,"chain":false,"stages":["mlb","aaa"],"who":"","choices":[{"label":"기사를 보지 않는다","outcomes":[{"p":"100%","text":"휴대폰을 끄고 야구에만 집중했다."}]},{"label":"인터뷰로 정면 반박한다","outcomes":[{"p":"100%","text":"\"결과로 보여 주겠다.\" 현지 팬들이 이름을 기억하기 시작했다."}]}],"meetB":"8%","meetP":"15%"},{"id":"bus","title":"마이너리그 버스","rare":false,"chain":false,"stages":["aaa"],"who":"","choices":[{"label":"버스에서 버틴다","outcomes":[{"p":"100%","text":"좁은 버스에서 동료들과 친해졌다. 몸은 고되다."}]},{"label":"내 돈으로 비행기를 탄다","outcomes":[{"p":"100%","text":"편하게 이동했지만 동료들과는 어색하다. (−1,000만)"}]}],"meetB":"5%","meetP":"7%"},{"id":"homesick","title":"향수병","rare":false,"chain":false,"stages":["mlb","aaa"],"who":"","choices":[{"label":"가족을 불러온다","outcomes":[{"p":"100%","text":"가족이 와서 마음이 편해졌다. (−3,000만)"}]},{"label":"야구에만 집중한다","outcomes":[{"p":"100%","text":"외로움을 훈련으로 이겨 냈다."}]}],"meetB":"9%","meetP":"15%"},{"id":"velocity","title":"160km 강속구","rare":false,"chain":false,"stages":["mlb","aaa"],"who":"B","choices":[{"label":"스윙을 줄인다","outcomes":[{"p":"100%","text":"짧고 빠른 스윙으로 강속구에 대응한다."}]},{"label":"내 스윙으로 정면 승부","outcomes":[{"p":"100%","text":"물러서지 않고 풀스윙을 고집한다."}]}],"meetB":"16%","meetP":"0%"},{"id":"p_slot","title":"팔 각도 바꾸기","rare":false,"chain":false,"stages":["hs","farm","aaa"],"who":"P","choices":[{"label":"스리쿼터로 내린다","outcomes":[{"p":"61%","text":"공이 타자 앞에서 춤추기 시작했다."},{"p":"39%","text":"릴리스 포인트가 자꾸 바뀐다. 아직 몸에 맞지 않는다."}]},{"label":"지금 폼을 지킨다","outcomes":[{"p":"100%","text":"익숙한 폼으로 밸런스를 다듬었다."}]}],"meetB":"0%","meetP":"16%"},{"id":"p_gun","title":"스피드건을 든 스카우트","rare":false,"chain":false,"stages":["hs"],"who":"P","choices":[{"label":"전력으로 뿌린다","outcomes":[{"p":"100%","text":"전광판에 찍힌 숫자에 관중석이 술렁였다."}]},{"label":"평소대로 던진다","outcomes":[{"p":"100%","text":"흔들리지 않고 내 공을 던졌다."}]}],"meetB":"0%","meetP":"2%"},{"id":"p_slump","title":"난타","rare":false,"chain":false,"stages":["farm","kbo","mlb","aaa","npb"],"who":"P","choices":[{"label":"결정구를 다시 다듬는다","outcomes":[{"p":"100%","text":"불펜에서 공 100개를 더 던지며 그립을 고쳤다."}]},{"label":"투구 습관을 고친다","outcomes":[{"p":"100%","text":"글러브 속 그립이 보였다. 습관을 고치자 공이 다시 숨었다."}]},{"label":"하루 쉬며 영상을 본다","outcomes":[{"p":"100%","text":"머리를 비우고 내 투구를 다시 봤다."}]}],"meetB":"0%","meetP":"20%"},{"id":"p_count","title":"투구 수 110개","rare":false,"chain":false,"stages":["farm","kbo","mlb","aaa","npb"],"who":"P","choices":[{"label":"끝까지 던지겠다","outcomes":[{"p":"73%","text":"마지막 공까지 내가 던졌다. 관중이 기립 박수를 쳤다."},{"p":"27%","text":"완투는 해냈지만 다음 날 팔꿈치가 붓기 시작했다."}]},{"label":"공을 넘긴다","outcomes":[{"p":"100%","text":"불펜이 리드를 지켰다. 다음 등판을 위해 어깨를 아꼈다."}]}],"meetB":"0%","meetP":"21%"},{"id":"p_blown","title":"블론 세이브","rare":false,"chain":false,"stages":["kbo","mlb","aaa","npb"],"who":"P","choices":[{"label":"바로 잊는다","outcomes":[{"p":"100%","text":"\"내일 또 던지면 된다.\" 짧게 말하고 짐을 쌌다."}]},{"label":"밤새 영상을 돌려 본다","outcomes":[{"p":"100%","text":"실투가 몰린 코스를 찾아냈다. 같은 실수는 하지 않는다."}]},{"label":"선배와 저녁을 먹는다","outcomes":[{"p":"100%","text":"\"나는 세 번 연속 맞은 적도 있어.\" 선배의 말에 웃음이 났다."}]}],"meetB":"0%","meetP":"14%"},{"id":"p_newpitch","title":"새 구종 제안","rare":false,"chain":false,"stages":["farm","kbo","mlb","aaa","npb"],"who":"P","choices":[{"label":"새 구종을 배운다","outcomes":[{"p":"100%","text":"캐치볼부터 너클볼을 섞기 시작했다."}]},{"label":"지금 공을 갈고닦는다","outcomes":[{"p":"100%","text":"익숙한 공의 완성도를 높이기로 했다."}]}],"meetB":"0%","meetP":"29%"},{"id":"p_grip","title":"선배의 그립","rare":false,"chain":false,"stages":["farm","kbo","aaa","npb"],"who":"P","choices":[{"label":"배운다","outcomes":[{"p":"100%","text":"손가락 위치 하나로 공이 이렇게 달라질 줄은 몰랐다."}]},{"label":"정중히 사양한다","outcomes":[{"p":"100%","text":"내 공은 내가 만들기로 했다."}]}],"meetB":"0%","meetP":"32%"},{"id":"p_power","title":"빅리그 타자들의 힘","rare":false,"chain":false,"stages":["mlb","aaa"],"who":"P","choices":[{"label":"하이 패스트볼","outcomes":[{"p":"100%","text":"존 위쪽으로 힘 있게 꽂는 연습을 했다."}]},{"label":"낮게 가라앉는 투심","outcomes":[{"p":"100%","text":"땅볼을 만드는 공을 손에 넣었다."}]}],"meetB":"0%","meetP":"21%"},{"id":"fan_letter","title":"어린 팬의 편지","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"다음 경기에서 약속한다","outcomes":[{"p":"100%","text":"\"꼭 홈런을 보여 줄게.\" 기자들이 이 약속을 기사로 썼다."}]},{"label":"사인볼과 답장을 보낸다","outcomes":[{"p":"100%","text":"정성껏 쓴 답장과 사인볼을 보냈다."}]}],"meetB":"15%","meetP":"13%"},{"id":"fan_letter2","title":"그 아이가 왔다","rare":false,"chain":true,"stages":["hs","farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"함께 시구 행사를 한다","outcomes":[{"p":"100%","text":"아이의 공을 받아 주자 관중석이 일어나 박수를 쳤다."}]},{"label":"조용히 사인만 해 준다","outcomes":[{"p":"100%","text":"경기 전 더그아웃에서 조용히 사인을 해 줬다."}]}],"meetB":"7%","meetP":"6%"},{"id":"agent","title":"에이전트의 제안","rare":false,"chain":false,"stages":["farm","kbo"],"who":"","choices":[{"label":"계약한다","outcomes":[{"p":"100%","text":"에이전트와 손을 잡았다. 큰 계약은 그에게 맡긴다."}]},{"label":"혼자 한다","outcomes":[{"p":"100%","text":"협상도 내 손으로 하기로 했다."}]}],"meetB":"36%","meetP":"25%"},{"id":"variety","title":"예능 출연 제안","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"출연한다","outcomes":[{"p":"100%","text":"입담이 화제가 됐다. 야구를 모르던 사람들도 이름을 안다."}]},{"label":"정중히 거절한다","outcomes":[{"p":"100%","text":"그 시간에 약점을 보완했다."}]}],"meetB":"19%","meetP":"17%"},{"id":"charity","title":"재단 설립","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"재단을 만든다","outcomes":[{"p":"100%","text":"유소년 야구 재단이 문을 열었다. 아이들에게 글러브와 배트를 나눴다."}]},{"label":"은퇴 후로 미룬다","outcomes":[{"p":"100%","text":"지금은 야구에 집중하기로 했다."}]}],"meetB":"30%","meetP":"27%"},{"id":"charity2","title":"재단의 첫 열매","rare":false,"chain":true,"stages":["hs","farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"축하 전화를 건다","outcomes":[{"p":"100%","text":"\"이제 경쟁자네.\" 웃으며 통화를 끝냈다. 연말 사회공헌상을 받았다."}]}],"meetB":"12%","meetP":"9%"},{"id":"marriage","title":"결혼","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"이번 겨울에 결혼한다","outcomes":[{"p":"100%","text":"많은 동료들이 축하해 줬다. 마음이 든든하다."}]},{"label":"커리어에 집중한다","outcomes":[{"p":"100%","text":"결혼은 조금 더 미루기로 했다."}]}],"meetB":"27%","meetP":"19%"},{"id":"baby","title":"첫아이","rare":false,"chain":true,"stages":["hs","farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"출산 휴가를 쓴다","outcomes":[{"p":"100%","text":"아이를 처음 안았다. 다음 경기부터 더 힘이 났다."}]},{"label":"경기에 남는다","outcomes":[{"p":"100%","text":"경기를 마치고 새벽 비행기로 달려갔다."}]}],"meetB":"10%","meetP":"9%"},{"id":"captain","title":"주장 제안","rare":false,"chain":false,"stages":["kbo","npb"],"who":"","choices":[{"label":"주장을 맡는다","outcomes":[{"p":"100%","text":"완장을 찼다. 더그아웃 분위기는 이제 내 몫이다."}]},{"label":"내 야구에 집중한다","outcomes":[{"p":"100%","text":"\"아직은 제 플레이로 보여 드리겠습니다.\""}]}],"meetB":"20%","meetP":"15%"},{"id":"mentor","title":"신인의 부탁","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"전담해서 가르친다","outcomes":[{"p":"100%","text":"내가 아는 것을 모두 알려 줬다. 신인의 눈빛이 달라졌다."}]},{"label":"내 훈련에 집중한다","outcomes":[{"p":"100%","text":"\"보고 배우는 게 제일 빨라.\" 묵묵히 훈련했다."}]}],"meetB":"7%","meetP":"7%"},{"id":"streak","title":"연속 기록","rare":false,"chain":false,"stages":["farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"기록에 도전한다","outcomes":[{"p":"55%","text":"의식할수록 몸이 굳었다. 기록은 거기서 멈췄다."},{"p":"45%","text":"31경기 연속 안타! 구단 신기록을 세웠다."}]},{"label":"신경 쓰지 않는다","outcomes":[{"p":"100%","text":"\"기록은 따라오는 겁니다.\" 평소처럼 경기를 준비했다."}]}],"meetB":"24%","meetP":"19%"},{"id":"umpire","title":"오심","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"강하게 항의한다","outcomes":[{"p":"51%","text":"퇴장과 함께 출장 정지 1경기를 받았다."},{"p":"49%","text":"심판이 판정을 번복하지는 않았지만 팬들은 내 편이었다."}]},{"label":"참고 다음을 준비한다","outcomes":[{"p":"100%","text":"분했지만 다음 공에 집중했다."}]}],"meetB":"18%","meetP":"13%"},{"id":"sponsor","title":"용품 후원 제안","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"후원을 받는다","outcomes":[{"p":"100%","text":"새 장비로 시즌을 시작한다."}]},{"label":"쓰던 장비를 고집한다","outcomes":[{"p":"100%","text":"손에 익은 장비가 최고다."}]}],"meetB":"32%","meetP":"32%"},{"id":"dh_move","title":"지명타자 제안","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"B","choices":[{"label":"지명타자로 간다","outcomes":[{"p":"100%","text":"방망이에만 집중하니 타구에 힘이 붙었다."}]},{"label":"수비를 지킨다","outcomes":[{"p":"100%","text":"\"글러브는 아직 못 내려놓습니다.\""}]}],"meetB":"17%","meetP":"0%"},{"id":"data_lab","title":"전력분석팀의 데이터","rare":false,"chain":false,"stages":["farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"데이터를 받아들인다","outcomes":[{"p":"100%","text":"숫자대로 연습했더니 감각이 달라졌다."}]},{"label":"내 감을 믿는다","outcomes":[{"p":"100%","text":"\"야구는 숫자만으로 하는 게 아니죠.\""}]}],"meetB":"39%","meetP":"37%"},{"id":"old_friend","title":"동기의 은퇴","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"은퇴식에 간다","outcomes":[{"p":"100%","text":"마지막 타석을 지켜보며 오래 박수를 쳤다."}]},{"label":"나는 아직이다","outcomes":[{"p":"100%","text":"그날 밤 혼자 실내 연습장에 불을 켰다."}]}],"meetB":"5%","meetP":"3%"},{"id":"farm_coach","title":"2군 감독의 특별 지도","rare":false,"chain":false,"stages":["farm"],"who":"","choices":[{"label":"따른다","outcomes":[{"p":"100%","text":"새벽 훈련이 쌓여 약점이 메워졌다."}]},{"label":"내 루틴을 지킨다","outcomes":[{"p":"100%","text":"무리하지 않고 내 페이스를 지켰다."}]}],"meetB":"6%","meetP":"6%"},{"id":"farm_trade","title":"트레이드 제안","rare":false,"chain":false,"stages":["farm"],"who":"","choices":[{"label":"새 팀에서 새 출발","outcomes":[{"p":"100%","text":"시즌이 끝나면 ○○ 구단으로 간다. 새 팀에서는 기회가 더 많다."}]},{"label":"이 팀에서 버틴다","outcomes":[{"p":"100%","text":"\"여기서 꼭 1군에 올라가겠습니다.\""}]}],"meetB":"3%","meetP":"4%"},{"id":"youtube","title":"유튜브 채널","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"채널을 연다","outcomes":[{"p":"100%","text":"훈련 브이로그가 조회수 100만을 넘었다."}]},{"label":"야구로만 보여 준다","outcomes":[{"p":"100%","text":"말보다 경기로 보여 주기로 했다."}]}],"meetB":"21%","meetP":"18%"},{"id":"pitch_clock","title":"피치클락","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"P","choices":[{"label":"템포를 올린다","outcomes":[{"p":"100%","text":"빠른 템포로 타자를 몰아붙였다."}]},{"label":"루틴을 지키며 적응한다","outcomes":[{"p":"100%","text":"짧아진 시간 안에 내 루틴을 압축했다."}]}],"meetB":"0%","meetP":"30%"},{"id":"tommy","title":"팔꿈치 인대","rare":true,"chain":false,"stages":["kbo","npb","mlb","aaa"],"who":"P","choices":[{"label":"토미존 수술을 받는다","outcomes":[{"p":"100%","text":"수술대에 올랐다. 긴 재활이 시작된다."}]},{"label":"주사를 맞고 던진다","outcomes":[{"p":"51%","text":"통증을 참고 시즌을 버텼다."},{"p":"49%","text":"결국 통증이 심해졌다. 구속이 떨어졌다."}]}],"meetB":"0%","meetP":"5%"},{"id":"tommy2","title":"재활 끝, 복귀","rare":false,"chain":true,"stages":["hs","farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"돌아왔다!","outcomes":[{"p":"100%","text":"관중석이 기립 박수로 복귀를 반겼다."}]}],"meetB":"0%","meetP":"2%"},{"id":"launch","title":"발사각 혁명","rare":false,"chain":false,"stages":["farm","kbo","npb","mlb","aaa"],"who":"B","choices":[{"label":"어퍼스윙으로 바꾼다","outcomes":[{"p":"100%","text":"타구가 하늘로 솟기 시작했다. 삼진도 조금 늘었다."}]},{"label":"레벨 스윙을 지킨다","outcomes":[{"p":"100%","text":"라인드라이브로 승부하기로 했다."}]}],"meetB":"36%","meetP":"0%"},{"id":"homecoming","title":"돌아온 영웅","rare":false,"chain":false,"stages":["kbo"],"who":"","choices":[{"label":"모자를 벗어 인사한다","outcomes":[{"p":"100%","text":"\"다녀왔습니다.\" 함성이 쏟아졌다."}]}],"meetB":"6%","meetP":"7%"},{"id":"npb_lang","title":"일본어 공부","rare":false,"chain":false,"stages":["npb"],"who":"","choices":[{"label":"매일 일본어를 공부한다","outcomes":[{"p":"100%","text":"서툰 일본어로 인터뷰를 하자 팬들이 크게 반겼다."}]},{"label":"통역에게 맡긴다","outcomes":[{"p":"100%","text":"야구에만 집중하기로 했다."}]}],"meetB":"24%","meetP":"35%"},{"id":"npb_ouen","title":"나만의 응원가","rare":false,"chain":false,"stages":["npb"],"who":"","choices":[{"label":"응원단에 인사하러 간다","outcomes":[{"p":"100%","text":"응원단과 사진을 찍었다. 다음 날 응원가가 더 커졌다."}]},{"label":"경기로 보답한다","outcomes":[{"p":"100%","text":"응원가가 들릴 때마다 힘이 났다."}]}],"meetB":"20%","meetP":"27%"},{"id":"npb_small","title":"일본식 세밀한 야구","rare":false,"chain":false,"stages":["npb"],"who":"","choices":[{"label":"그대로 따른다","outcomes":[{"p":"100%","text":"세밀한 야구가 몸에 붙었다."}]},{"label":"내 스타일을 지킨다","outcomes":[{"p":"100%","text":"힘으로 승부하는 내 야구를 지키기로 했다."}]}],"meetB":"23%","meetP":"37%"},{"id":"npb_onsen","title":"원정지의 온천","rare":false,"chain":false,"stages":["npb"],"who":"","choices":[{"label":"같이 간다","outcomes":[{"p":"100%","text":"동료들과 한층 가까워졌다."}]},{"label":"숙소에서 개인 훈련","outcomes":[{"p":"100%","text":"혼자 섀도 스윙을 300번 했다."}]}],"meetB":"19%","meetP":"28%"},{"id":"l_bday","title":"아버지 환갑","rare":false,"chain":false,"stages":["farm","kbo","npb","mlb","aaa"],"who":"","choices":[{"label":"잔치를 크게 연다","outcomes":[{"p":"100%","text":"동료들까지 와서 아버지가 그렇게 웃으시는 건 처음 봤다."}]},{"label":"가족끼리 조촐하게","outcomes":[{"p":"100%","text":"집에서 미역국을 먹고 사진을 찍었다."}]}],"meetB":"38%","meetP":"38%"},{"id":"l_sibling","title":"동생의 등록금","rare":false,"chain":false,"stages":["farm","kbo","npb"],"who":"","choices":[{"label":"내가 낸다","outcomes":[{"p":"100%","text":"\"형(오빠) 덕분이야.\" 동생이 처음으로 고맙다고 했다."}]},{"label":"장학금을 알아보라고 한다","outcomes":[{"p":"100%","text":"동생은 아르바이트를 시작했다. 마음 한구석이 무겁다."}]}],"meetB":"38%","meetP":"37%"},{"id":"l_dating","title":"열애설","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"공개 연애를 한다","outcomes":[{"p":"100%","text":"\"예쁘게 만나고 있습니다.\" 팬들이 축하해 줬다."}]},{"label":"부인한다","outcomes":[{"p":"100%","text":"\"친한 친구입니다.\" 기사가 조용히 묻혔다."}]}],"meetB":"17%","meetP":"17%"},{"id":"l_second","title":"둘째 소식","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"두 팔 벌려 반긴다","outcomes":[{"p":"10%","text":"둘째 나하윤이가 태어났다. 집이 시끌벅적하다."},{"p":"10%","text":"둘째 나서아가 태어났다. 집이 시끌벅적하다."},{"p":"10%","text":"둘째 나도윤이가 태어났다. 집이 시끌벅적하다."},{"p":"10%","text":"둘째 나건우가 태어났다. 집이 시끌벅적하다."},{"p":"9%","text":"둘째 나이준이가 태어났다. 집이 시끌벅적하다."},{"p":"9%","text":"둘째 나아린이가 태어났다. 집이 시끌벅적하다."},{"p":"9%","text":"둘째 나하은이가 태어났다. 집이 시끌벅적하다."},{"p":"9%","text":"둘째 나지안이가 태어났다. 집이 시끌벅적하다."},{"p":"9%","text":"둘째 나지유가 태어났다. 집이 시끌벅적하다."},{"p":"8%","text":"둘째 나주원이가 태어났다. 집이 시끌벅적하다."},{"p":"8%","text":"둘째 나시우가 태어났다. 집이 시끌벅적하다."}]}],"meetB":"3%","meetP":"2%"},{"id":"l_kidball","title":"아이의 꿈","rare":false,"chain":false,"stages":["farm","kbo","npb","mlb","aaa","hs"],"who":"","choices":[{"label":"리틀야구에 보낸다","outcomes":[{"p":"100%","text":"나서준의 첫 글러브를 직접 골라 줬다."}]},{"label":"공부를 시킨다","outcomes":[{"p":"100%","text":"\"야구는 아빠 하나로 충분해.\""}]}],"meetB":"0.25%","meetP":"0.50%"},{"id":"l_scam","title":"지인의 투자 제안","rare":true,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"투자한다","outcomes":[{"p":"64%","text":"연락이 끊겼다. 10억이 사라졌다."},{"p":"36%","text":"정말로 대박이 났다. 15억이 들어왔다."}]},{"label":"정중히 거절한다","outcomes":[{"p":"100%","text":"\"돈 거래는 안 합니다.\" 몇 달 뒤 그 사업이 망했다는 소식을 들었다."}]}],"meetB":"4%","meetP":"3%"},{"id":"l_scandal","title":"사치 논란","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"기부로 답한다","outcomes":[{"p":"100%","text":"조용히 낸 기부금이 알려지자 여론이 돌아섰다."}]},{"label":"신경 쓰지 않는다","outcomes":[{"p":"100%","text":"비판 기사가 며칠 더 이어졌다."}]}],"meetB":"0%","meetP":"0%"},{"id":"l_tax","title":"해외 소득 세금","rare":true,"chain":false,"stages":["mlb","npb","aaa"],"who":"","choices":[{"label":"세무사를 쓴다","outcomes":[{"p":"100%","text":"전문가가 깔끔하게 정리해 줬다."}]},{"label":"직접 처리한다","outcomes":[{"p":"51%","text":"실수로 가산세 2억을 물었다."},{"p":"49%","text":"밤새 서류와 씨름했지만 무사히 끝냈다."}]}],"meetB":"1%","meetP":"2%"},{"id":"l_boom","title":"집값 급등","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"가장 비싼 집을 팔아 차익을 남긴다","outcomes":[{"p":"100%","text":"한강뷰 아파트를 51억 7,500만에 팔았다. 이사는 번거로웠다."}]},{"label":"계속 산다","outcomes":[{"p":"100%","text":"\"우리 가족이 사는 집이니까요.\""}]}],"meetB":"0%","meetP":"0%"},{"id":"hs_camp","title":"동계 전지훈련","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"전지훈련에 간다","outcomes":[{"p":"100%","text":"따뜻한 바닷바람 속에서 하루 500개씩 공을 쳤다(던졌다)."}]},{"label":"학교 운동장에서 버틴다","outcomes":[{"p":"100%","text":"얼어붙은 운동장을 뛰고 또 뛰었다."}]}],"meetB":"4%","meetP":"4%"},{"id":"hs_newcoach","title":"새 감독 부임","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"새 방식에 맞춘다","outcomes":[{"p":"66%","text":"프로식 훈련이 몸에 맞았다. 약점이 눈에 띄게 줄었다."},{"p":"34%","text":"새 방식이 낯설어 한동안 헤맸다."}]},{"label":"예전 방식을 지킨다","outcomes":[{"p":"100%","text":"익숙한 루틴으로 시즌을 준비했다."}]}],"meetB":"2%","meetP":"3%"},{"id":"hs_dorm","title":"기숙사 생활","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"규칙을 지킨다","outcomes":[{"p":"100%","text":"푹 자고 나니 아침 훈련이 가벼웠다."}]},{"label":"몰래 야간 개인 훈련","outcomes":[{"p":"68%","text":"아무도 모르게 실력이 늘었다."},{"p":"32%","text":"훈련은 됐지만 사감 선생님께 걸려 반성문을 썼다."}]}],"meetB":"3%","meetP":"4%"},{"id":"hs_path","title":"진로 상담","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"프로 직행을 노린다","outcomes":[{"p":"100%","text":"\"프로에 갑니다.\" 목표가 분명해졌다."}]},{"label":"대학 진학도 열어 둔다","outcomes":[{"p":"100%","text":"길이 두 개라고 생각하니 마음이 편해졌다."}]}],"meetB":"3%","meetP":"4%"},{"id":"hs_exam","title":"시험 기간","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"공부도 챙긴다","outcomes":[{"p":"100%","text":"책상 앞에서도 집중력이 길러졌다."}]},{"label":"훈련만 한다","outcomes":[{"p":"64%","text":"아슬아슬하게 낙제를 면했다."},{"p":"36%","text":"성적표를 본 감독에게 크게 혼났다."}]}],"meetB":"3%","meetP":"2%"},{"id":"hs_gear","title":"첫 내 장비","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"비싼 새 장비를 산다","outcomes":[{"p":"100%","text":"손에 착 감긴다. 감각이 살아났다."}]},{"label":"선배에게 물려받는다","outcomes":[{"p":"100%","text":"\"잘 써라.\" 선배의 손때가 묻은 장비가 든든했다."}]}],"meetB":"4%","meetP":"4%"},{"id":"hs_senior_draft","title":"선배의 프로 지명","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"축하 전화하고 조언을 듣는다","outcomes":[{"p":"100%","text":"\"스카우트는 꾸준함을 봐.\" 선배의 말을 수첩에 적었다."}]},{"label":"질 수 없다, 훈련한다","outcomes":[{"p":"100%","text":"현수막을 지날 때마다 이를 악물었다."}]}],"meetB":"3%","meetP":"2%"},{"id":"hs_boosters","title":"학부모 후원회","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"행사에 간다","outcomes":[{"p":"100%","text":"어른들 앞에서 떨리는 목소리로 인사했다. 박수가 쏟아졌다."}]},{"label":"훈련에 집중한다","outcomes":[{"p":"100%","text":"그 시간에 실내 연습장 불을 켰다."}]}],"meetB":"4%","meetP":"4%"},{"id":"hs_vs_pro","title":"프로 2군과 연습경기","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"정면 승부한다","outcomes":[{"p":"55%","text":"프로의 벽은 높았다. 그래도 많이 배웠다."},{"p":"45%","text":"프로 투수의 직구를 받아쳐 2루타! 관계자들이 이름을 물었다."}]},{"label":"배우는 자세로 임한다","outcomes":[{"p":"100%","text":"프로 선수들의 루틴을 눈에 담았다."}]}],"meetB":"3%","meetP":"5%"},{"id":"hs_pitchlimit","title":"투구 수 제한 규정","rare":false,"chain":false,"stages":["hs"],"who":"P","choices":[{"label":"규정에 맞춰 효율을 키운다","outcomes":[{"p":"100%","text":"적은 공으로 아웃을 잡는 법을 익혔다."}]},{"label":"체력으로 버틴다","outcomes":[{"p":"100%","text":"불펜에서 쉬지 않고 몸을 만들었다."}]}],"meetB":"0%","meetP":"3%"},{"id":"hs_position","title":"포지션 변경 제안","rare":false,"chain":false,"stages":["hs"],"who":"B","choices":[{"label":"외야로 간다","outcomes":[{"p":"100%","text":"넓은 외야를 뛰어다니니 발이 더 빨라졌다."}]},{"label":"지금 자리를 지킨다","outcomes":[{"p":"100%","text":"익숙한 자리에서 방망이에 집중했다."}]}],"meetB":"3%","meetP":"0%"},{"id":"hs_jersey","title":"등번호 고르기","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"에이스 번호를 단다","outcomes":[{"p":"100%","text":"등에 무게가 실렸다. 그만큼 책임감도."}]},{"label":"좋아하던 번호를 고른다","outcomes":[{"p":"100%","text":"어릴 적부터 꿈꾸던 번호를 달았다."}]}],"meetB":"4%","meetP":"2%"},{"id":"hs_video","title":"프로 선수 영상 공부","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"그대로 따라 한다","outcomes":[{"p":"51%","text":"따라 하다 보니 내 것이 됐다."},{"p":"49%","text":"몸에 안 맞아 원래대로 돌아왔다."}]},{"label":"장점만 가져온다","outcomes":[{"p":"100%","text":"루틴 하나만 가져와 내 것으로 만들었다."}]}],"meetB":"2%","meetP":"5%"},{"id":"hs_parents","title":"부모님의 걱정","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"꼭 해내겠다고 약속한다","outcomes":[{"p":"100%","text":"\"믿어 주세요.\" 부모님이 조용히 고개를 끄덕이셨다."}]},{"label":"함께 미래를 이야기한다","outcomes":[{"p":"100%","text":"밤늦게까지 이야기했다. 마음이 한결 가벼워졌다."}]}],"meetB":"2%","meetP":"3%"},{"id":"hs_final","title":"전국대회 결승","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"긴장 풀고 즐긴다","outcomes":[{"p":"51%","text":"우승! 헹가래를 받았다."},{"p":"49%","text":"준우승. 그래도 웃으며 메달을 걸었다."}]},{"label":"밤새 상대를 분석한다","outcomes":[{"p":"100%","text":"상대의 버릇을 다 외웠다. 결승에서 그대로 나왔다."}]}],"meetB":"2%","meetP":"1%"},{"id":"hs_rival_school","title":"라이벌 학교 정기전","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"도발에 응한다","outcomes":[{"p":"100%","text":"\"경기장에서 보자.\" 한마디에 학교가 들끓었다."}]},{"label":"경기로 말한다","outcomes":[{"p":"100%","text":"말없이 경기에서 보여 줬다."}]}],"meetB":"3%","meetP":"1%"},{"id":"hs_trip","title":"수학여행","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"수학여행에 간다","outcomes":[{"p":"100%","text":"친구들과 밤새 웃었다. 오랜만에 고등학생이 된 기분이다."}]},{"label":"빠지고 훈련한다","outcomes":[{"p":"100%","text":"텅 빈 운동장에서 혼자 훈련했다."}]}],"meetB":"2%","meetP":"3%"},{"id":"hs_rain","title":"장마로 경기 연기","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"실내에서 훈련한다","outcomes":[{"p":"100%","text":"좁은 실내에서 기본기를 다졌다."}]},{"label":"푹 쉰다","outcomes":[{"p":"100%","text":"오랜만에 늦잠을 잤다. 몸이 가볍다."}]}],"meetB":"2%","meetP":"2%"},{"id":"hs_injuries","title":"부상자 속출","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"무리해서 더 뛴다","outcomes":[{"p":"100%","text":"팀을 위해 몸을 던졌다. 동료들이 고마워했다."}]},{"label":"원래 역할만 한다","outcomes":[{"p":"100%","text":"\"다치면 오래 못 뜁니다.\" 감독도 고개를 끄덕였다."}]}],"meetB":"0.75%","meetP":"0.75%"},{"id":"hs_paper","title":"지역 신문의 내 기사","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"스크랩해 둔다","outcomes":[{"p":"100%","text":"기사를 오려 방 벽에 붙였다. 볼 때마다 힘이 난다."}]},{"label":"신경 쓰지 않는다","outcomes":[{"p":"100%","text":"\"아직 아무것도 한 게 없습니다.\""}]}],"meetB":"2%","meetP":"2%"},{"id":"hs_coach_clash","title":"감독과의 갈등","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"먼저 사과한다","outcomes":[{"p":"100%","text":"감독이 어깨를 두드렸다. \"네 마음 안다.\""}]},{"label":"내 생각을 말한다","outcomes":[{"p":"51%","text":"감독이 내 말을 받아들였다. 원하는 자리에서 뛰게 됐다."},{"p":"49%","text":"괘씸죄로 한 경기 벤치에 앉았다."}]}],"meetB":"3%","meetP":"2%"},{"id":"hs_pcbang","title":"친구들의 유혹","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"오늘만 논다","outcomes":[{"p":"100%","text":"오랜만에 친구들과 실컷 웃었다."}]},{"label":"거절하고 훈련한다","outcomes":[{"p":"100%","text":"\"다음에 꼭 갈게.\" 배트를 들고 운동장으로 갔다."}]}],"meetB":"2%","meetP":"2%"},{"id":"hs_pro_talk","title":"프로 구단 면담","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"적극적으로 어필한다","outcomes":[{"p":"100%","text":"\"저를 뽑으시면 후회 안 하실 겁니다.\" 팀장이 웃었다."}]},{"label":"겸손하게 답한다","outcomes":[{"p":"100%","text":"\"아직 많이 부족합니다.\" 성실하다는 인상을 남겼다."}]}],"meetB":"1%","meetP":"1%"},{"id":"hs_college","title":"대학 감독의 스카우트","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"관심을 보인다","outcomes":[{"p":"100%","text":"보험이 생기니 마음이 편해졌다."}]},{"label":"프로만 본다","outcomes":[{"p":"100%","text":"\"죄송합니다. 프로에 도전하겠습니다.\""}]}],"meetB":"2%","meetP":"3%"},{"id":"hs_heat","title":"폭염 속 경기","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"물 챙기며 버틴다","outcomes":[{"p":"100%","text":"끝까지 그라운드를 지켰다."}]},{"label":"교체를 요청한다","outcomes":[{"p":"100%","text":"무리하지 않았다. 다음 경기를 위해서."}]}],"meetB":"3%","meetP":"0.75%"},{"id":"hs_cheer","title":"전교생 응원","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"응원석에 인사한다","outcomes":[{"p":"100%","text":"응원가가 더 커졌다. 그날 몸이 날아다녔다."}]},{"label":"경기에만 집중한다","outcomes":[{"p":"100%","text":"함성은 들리지 않았다. 공만 보였다."}]}],"meetB":"2%","meetP":"3%"},{"id":"hs_ball","title":"기념구","rare":false,"chain":false,"stages":["hs"],"who":"","choices":[{"label":"부모님께 드린다","outcomes":[{"p":"100%","text":"부모님이 공을 장식장 맨 앞에 올려 두셨다."}]},{"label":"학교에 기증한다","outcomes":[{"p":"100%","text":"야구부 진열장에 내 이름이 적힌 공이 놓였다."}]}],"meetB":"2%","meetP":"1%"},{"id":"mn_winter","title":"윈터리그 제안","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"간다","outcomes":[{"p":"100%","text":"낯선 땅에서 매일 경기를 뛰며 실전 감각을 키웠다."}]},{"label":"쉰다","outcomes":[{"p":"100%","text":"몸을 회복하는 데 집중했다."}]}],"meetB":"9%","meetP":"10%"},{"id":"mn_camp_list","title":"스프링캠프 초청 명단","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"첫날부터 다 보여 준다","outcomes":[{"p":"56%","text":"감독이 \"저 친구 누구야?\"라고 물었다."},{"p":"44%","text":"너무 힘이 들어가 어깨가 뭉쳤다."}]},{"label":"내 페이스대로 한다","outcomes":[{"p":"100%","text":"차분히 준비한 대로 보여 줬다."}]}],"meetB":"11%","meetP":"11%"},{"id":"mn_weight","title":"체중 감량 지시","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"따른다","outcomes":[{"p":"100%","text":"몸이 가벼워지니 움직임이 빨라졌다."}]},{"label":"힘을 지키려 거부한다","outcomes":[{"p":"100%","text":"\"이 무게가 제 힘입니다.\""}]}],"meetB":"9%","meetP":"10%"},{"id":"mn_roommate","title":"외국인 룸메이트","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"먼저 친해진다","outcomes":[{"p":"100%","text":"번역기로 수다를 떨다 친구가 됐다. 그의 훈련법도 배웠다."}]},{"label":"각자 생활한다","outcomes":[{"p":"100%","text":"조용히 내 훈련에 집중했다."}]}],"meetB":"11%","meetP":"13%"},{"id":"mn_gear_cut","title":"장비 지원 축소","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"좋은 장비를 산다","outcomes":[{"p":"100%","text":"좋은 장비가 손에 붙었다."}]},{"label":"쓰던 걸 고쳐 쓴다","outcomes":[{"p":"100%","text":"테이프를 감아 가며 버텼다."}]}],"meetB":"11%","meetP":"12%"},{"id":"mn_goal","title":"올해의 목표","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"\"1군 개막전\"이라고 쓴다","outcomes":[{"p":"100%","text":"목표를 사물함에 붙였다."}]},{"label":"\"다치지 않기\"라고 쓴다","outcomes":[{"p":"100%","text":"꾸준함이 먼저다."}]}],"meetB":"9%","meetP":"7%"},{"id":"mn_scout_report","title":"스카우팅 리포트 유출","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"약점을 파고든다","outcomes":[{"p":"100%","text":"그 한 줄을 지우려고 겨우내 매달렸다."}]},{"label":"장점을 더 키운다","outcomes":[{"p":"100%","text":"\"약점보다 무기가 중요해.\""}]}],"meetB":"9%","meetP":"13%"},{"id":"mn_callwait","title":"콜업 대기","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"짐을 싸 두고 기다린다","outcomes":[{"p":"100%","text":"전화기를 손에서 놓지 못했다."}]},{"label":"신경 끄고 집중한다","outcomes":[{"p":"100%","text":"오늘 경기에만 집중했다."}]}],"meetB":"7%","meetP":"9%"},{"id":"mn_oneday","title":"하루짜리 대체 콜업","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"모든 걸 건다","outcomes":[{"p":"55%","text":"아쉽게 끝났다. 그래도 1군의 공기를 맡았다."},{"p":"45%","text":"대타 적시타! 더그아웃이 들썩였다."}]},{"label":"경험으로 즐긴다","outcomes":[{"p":"100%","text":"1군 선수들의 준비 과정을 눈에 담았다."}]}],"meetB":"5%","meetP":"5%"},{"id":"mn_daygame","title":"땡볕 낮 경기","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"버틴다","outcomes":[{"p":"100%","text":"땀을 한 바가지 흘렸다."}]},{"label":"루틴을 조절한다","outcomes":[{"p":"100%","text":"훈련량을 줄이고 경기에 힘을 아꼈다."}]}],"meetB":"6%","meetP":"9%"},{"id":"mn_lowpay","title":"박봉 버티기","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"레슨 아르바이트를 한다","outcomes":[{"p":"100%","text":"주말마다 아이들에게 야구를 가르쳤다."}]},{"label":"아껴 쓴다","outcomes":[{"p":"100%","text":"라면으로 버티며 훈련에 매달렸다."}]}],"meetB":"6%","meetP":"7%"},{"id":"mn_indie","title":"독립리그 제안","rare":true,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"남는다","outcomes":[{"p":"100%","text":"\"여기서 꼭 올라가겠습니다.\""}]},{"label":"마음이 흔들린다","outcomes":[{"p":"100%","text":"고민 끝에 남았다. 대신 독하게 훈련했다."}]}],"meetB":"3%","meetP":"2%"},{"id":"mn_rehab_mate","title":"재활 선수 룸메이트","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"같이 재활 운동을 한다","outcomes":[{"p":"100%","text":"스타의 몸 관리 비법을 배웠다."}]},{"label":"내 훈련만 한다","outcomes":[{"p":"100%","text":"각자의 길을 갔다."}]}],"meetB":"7%","meetP":"4%"},{"id":"mn_role","title":"포지션 변경 제안","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"받아들인다","outcomes":[{"p":"100%","text":"새 역할에 맞춰 힘을 키웠다."}]},{"label":"지금 자리를 지킨다","outcomes":[{"p":"100%","text":"\"제 자리에서 증명하겠습니다.\""}]}],"meetB":"5%","meetP":"7%"},{"id":"mn_empty","title":"텅 빈 관중석","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"혼자라도 최선을 다한다","outcomes":[{"p":"100%","text":"맨 앞줄 할아버지 팬이 박수를 쳐 줬다."}]},{"label":"대충 넘긴다","outcomes":[{"p":"100%","text":"힘을 아꼈다."}]}],"meetB":"8%","meetP":"6%"},{"id":"mn_release","title":"동기의 방출","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"위로하러 간다","outcomes":[{"p":"100%","text":"밤새 이야기를 들어 줬다. \"넌 꼭 1군 가라.\""}]},{"label":"더 독하게 훈련한다","outcomes":[{"p":"100%","text":"\"나는 저렇게 안 된다.\" 새벽까지 훈련했다."}]}],"meetB":"7%","meetP":"6%"},{"id":"mn_rehab_game","title":"1군 스타와 맞대결","rare":false,"chain":false,"stages":["farm","aaa"],"who":"","choices":[{"label":"전력으로 붙는다","outcomes":[{"p":"60%","text":"역시 1군은 달랐다."},{"p":"40%","text":"에이스의 직구를 담장 너머로 보냈다! 코칭스태프가 수첩을 꺼냈다."}]},{"label":"한 수 배운다","outcomes":[{"p":"100%","text":"경기 뒤 찾아가 조언을 구했다. 친절하게 알려 줬다."}]}],"meetB":"7%","meetP":"8%"},{"id":"t_allstar_vote","title":"올스타 팬 투표","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"SNS로 투표를 독려한다","outcomes":[{"p":"51%","text":"역전 1위! 올스타 베스트로 뽑혔다."},{"p":"49%","text":"아쉽게 2위. 그래도 팬들이 많이 움직였다."}]},{"label":"조용히 기다린다","outcomes":[{"p":"100%","text":"결과는 팬들에게 맡겼다."}]}],"meetB":"19%","meetP":"16%"},{"id":"t_derby","title":"올스타 이벤트 초청","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"나간다","outcomes":[{"p":"64%","text":"우승은 놓쳤지만 축제를 즐겼다."},{"p":"36%","text":"홈런 더비 우승! 마지막 한 방이 장외로 날아갔다."}]},{"label":"쉬겠다고 한다","outcomes":[{"p":"100%","text":"후반기를 위해 쉬었다."}]}],"meetB":"16%","meetP":"14%"},{"id":"t_walkoff","title":"끝내기 세리머니","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"B","choices":[{"label":"화끈하게 한다","outcomes":[{"p":"100%","text":"물세례 세리머니 영상이 하루 종일 화제가 됐다."}]},{"label":"조심스럽게 한다","outcomes":[{"p":"100%","text":"하이파이브로 짧게 마무리했다."}]}],"meetB":"19%","meetP":"0%"},{"id":"t_signing","title":"팬 사인회","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"마지막 팬까지 다 해 준다","outcomes":[{"p":"100%","text":"세 시간 넘게 사인을 했다. 팔이 아프지만 뿌듯하다."}]},{"label":"시간 맞춰 끝낸다","outcomes":[{"p":"100%","text":"정해진 시간만큼 정성껏 했다."}]}],"meetB":"21%","meetP":"15%"},{"id":"t_mascot","title":"마스코트 퍼포먼스","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"같이 춤춘다","outcomes":[{"p":"100%","text":"어설픈 춤이 오히려 화제가 됐다."}]},{"label":"사양한다","outcomes":[{"p":"100%","text":"\"춤은 정말 자신이 없습니다.\""}]}],"meetB":"23%","meetP":"15%"},{"id":"t_salary_fight","title":"연봉 협상 장기전","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"버틴다","outcomes":[{"p":"51%","text":"구단이 한발 물러섰다."},{"p":"49%","text":"협상이 길어져 캠프에 늦게 합류했다."}]},{"label":"빨리 도장을 찍는다","outcomes":[{"p":"100%","text":"돈보다 준비가 먼저다."}]}],"meetB":"23%","meetP":"21%"},{"id":"t_rookie_rival","title":"거물 신인의 등장","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"정면으로 경쟁한다","outcomes":[{"p":"100%","text":"\"자리는 실력으로 지키는 겁니다.\""}]},{"label":"먼저 손을 내민다","outcomes":[{"p":"100%","text":"신인에게 밥을 샀다. 더그아웃 분위기가 좋아졌다."}]}],"meetB":"27%","meetP":"20%"},{"id":"t_cf","title":"광고 모델 제안","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"찍는다","outcomes":[{"p":"100%","text":"광고가 TV에 나오자 아이들이 따라 했다."}]},{"label":"훈련을 택한다","outcomes":[{"p":"100%","text":"\"시즌 끝나고 이야기하시죠.\""}]}],"meetB":"26%","meetP":"23%"},{"id":"t_bench_clear","title":"벤치 클리어링","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"물러서지 않는다","outcomes":[{"p":"51%","text":"퇴장에 출장 정지까지 받았다. 그래도 동료들은 내 편이다."},{"p":"49%","text":"팀이 하나로 뭉쳤다."}]},{"label":"말리러 나선다","outcomes":[{"p":"100%","text":"먼저 사과하고 상황을 정리했다. 성숙하다는 평을 들었다."}]}],"meetB":"22%","meetP":"17%"},{"id":"t_milestone_ball","title":"기념구를 잡은 관중","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"유니폼과 바꾼다","outcomes":[{"p":"100%","text":"관중과 기념사진까지 찍었다."}]},{"label":"그냥 기념으로 드린다","outcomes":[{"p":"100%","text":"\"그 공은 당신 겁니다.\" 훈훈한 기사가 났다."}]}],"meetB":"18%","meetP":"16%"},{"id":"t_rain_delay","title":"우천 중단 2시간","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"실내에서 몸을 계속 푼다","outcomes":[{"p":"100%","text":"재개되자마자 바로 경기에 들어갔다."}]},{"label":"방수포 슬라이딩 쇼","outcomes":[{"p":"79%","text":"관중석이 웃음바다가 됐다."},{"p":"21%","text":"관중은 환호했지만 무릎이 까졌다."}]}],"meetB":"18%","meetP":"15%"},{"id":"t_trade_deadline","title":"트레이드 마감일","rare":true,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"남겠다고 한다","outcomes":[{"p":"100%","text":"팬들이 \"의리\"라며 내 이름을 연호했다."}]},{"label":"구단 결정에 따른다","outcomes":[{"p":"100%","text":"결국 트레이드는 없었다. 마음은 편해졌다."}]}],"meetB":"5%","meetP":"5%"},{"id":"t_kid_hospital","title":"어린이 병원 방문","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"간다","outcomes":[{"p":"100%","text":"아이들의 웃음에 오히려 힘을 얻었다."}]},{"label":"사인볼만 보낸다","outcomes":[{"p":"100%","text":"사인볼 50개를 보냈다."}]}],"meetB":"31%","meetP":"32%"},{"id":"t_new_stadium","title":"새 구장 개장","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"구장에 맞춰 바꾼다","outcomes":[{"p":"100%","text":"새 구장에 맞춘 야구를 준비했다."}]},{"label":"내 야구를 한다","outcomes":[{"p":"100%","text":"구장은 바뀌어도 야구는 같다."}]}],"meetB":"32%","meetP":"30%"},{"id":"t_doc","title":"다큐멘터리 촬영","rare":false,"chain":false,"stages":["kbo","npb","mlb"],"who":"","choices":[{"label":"촬영한다","outcomes":[{"p":"100%","text":"카메라가 늘 따라다닌다. 방송 후 팬이 크게 늘었다."}]},{"label":"거절한다","outcomes":[{"p":"100%","text":"야구에만 집중하고 싶다."}]}],"meetB":"23%","meetP":"19%"}]}; })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>
 /* 게임 진행: 투구 → 스윙 판정 → 타구 → 결과, 그리고 화면 그리기와 입력·HUD 연결.
@@ -9620,6 +10619,7 @@ body {
       <p class="card__eyebrow">커리어 모드 · 새 선수</p>
       <h2 class="card__title card__title--sm">내 선수 만들기</h2>
       <p class="card__lead">고3 마지막 시즌부터 시작합니다. 훈련으로 능력치를 올리고, 승부처 타석은 직접 칩니다.</p>
+      ${BB.afterUI ? BB.afterUI.resumeLine() : ''}
       <div class="form">
         <label class="field" for="cName"><span>이름</span><input id="cName" maxlength="8" value="${nm}" autocomplete="off" spellcheck="false"></label>
         <label class="field field--num" for="cNum"><span>등번호</span><input id="cNum" type="number" min="0" max="99" inputmode="numeric" value="${no}"></label>
@@ -10452,7 +11452,7 @@ body {
     applyPlayer();
     const notes = [];
     if (out.cond) notes.push(`컨디션 ${out.cond > 0 ? '+' : ''}${out.cond}`);
-    if (out.fans) notes.push(`인기 +${out.fans}`);
+    if (out.fans) notes.push(`인기 ${out.fans > 0 ? '+' : '−'}${Math.abs(out.fans)}`);
     if (out.adapt) notes.push(`해외 적응 ${out.adapt > 0 ? '+' : ''}${out.adapt}`);
     if (out.cash) notes.push(`자산 ${out.cash > 0 ? '+' : '−'}${C.money(Math.abs(out.cash))}`);
     if (out.skipKey) notes.push('승부처 한 타석 휴식');
@@ -10487,6 +11487,7 @@ body {
     if (atSeasonEnd) C.closeSeason(P, rng, null);
     const rec = C.retire(P, reason);
     if (atSeasonEnd) rec.age = P.age - 1;
+    if (BB.afterUI) BB.afterUI.prepare(P, rec);                // 은퇴 후 삶: 은퇴 직전 모습으로 만들어 둔다
     const L = C.induct(BB.Store.get('legacy'), rec);
     BB.Store.set('legacy', L);
     P = null;
@@ -10528,7 +11529,8 @@ body {
       <div class="note">${rec.life.epilogue.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}
       ${rec.heir ? `<p class="move">아이 ${esc(rec.heir.child)}도 야구를 한다. 다음 선수로 <b>야구인 2세</b>를 고를 수 있다.</p>` : ''}
       <p class="salary">다음 선수에게 남기는 유산: 능력치 +${rec.legacy}</p>
-      <button class="play" type="button" data-act="newPlayer">새 선수로 다시 시작</button>
+      ${BB.afterUI ? BB.afterUI.startButton() : ''}
+      <button class="${BB.afterUI && BB.afterUI.startButton() ? 'btn' : 'play'}" type="button" data-act="newPlayer">새 선수로 다시 시작</button>
       <button class="btn btn--ghost" type="button" data-act="hof">명예의 전당 보기</button>`);
   }
 
@@ -10539,7 +11541,7 @@ body {
         <span class="hof__rank">${i + 1}</span>
         <span class="hof__main"><b>${esc(r.name)} <small>#${r.num}</small></b>
           <i>${r.pos === 'P' && r.pitch ? (r.pitch.seasons ? `투수 · 1군 ${r.pitch.seasons}시즌 · ${r.pitch.W}승 ${r.pitch.SV}세이브 · ${r.pitch.K}탈삼진 · ERA ${r.pitch.ERA.toFixed(2)}` : '투수 · 1군 기록 없음')
-            : r.pro.seasons ? `1군 ${r.pro.seasons}시즌 · 홈런 ${r.pro.HR} · 안타 ${r.pro.H} · 타율 ${f3(r.pro.AVG)}` : '1군 기록 없음'}${r.number ? ' · 영구결번' : ''}</i></span>
+            : r.pro.seasons ? `1군 ${r.pro.seasons}시즌 · 홈런 ${r.pro.HR} · 안타 ${r.pro.H} · 타율 ${f3(r.pro.AVG)}` : '1군 기록 없음'}${r.number ? ' · 영구결번' : ''}${r.after ? ` · 은퇴 후 「${esc(r.after.title)}」` : ''}</i></span>
         <span class="hof__grade grade--${C.GRADES.findIndex((g) => g[1] === r.grade)}">${r.grade}<small>${r.score}</small></span>
       </li>`).join('');
     show(`
@@ -10638,6 +11640,285 @@ body {
 
   refreshEntry();
   BB.careerUI = { refreshEntry, showHub, get player() { return P; } };
+})(typeof window !== 'undefined' ? window : globalThis);
+</script>
+<script>
+/* 은퇴 후의 삶 화면: 직업 고르기 → 올해 방향 → 이벤트 → 연말 결산 → … → 마무리.
+ * 계산은 after.js(C.After), 자산은 life.js 를 그대로 쓴다. 커리어 화면(viewCareer)을 함께 쓴다.
+ */
+(function (global) {
+  'use strict';
+  const BB = global.BB;
+  const C = BB.Career;
+  const AF = C.After;
+  const G = BB.game;
+  const $ = (id) => document.getElementById(id);
+  const view = $('viewCareer');
+  const rng = BB.makeRng();
+  const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const KEY = 'after';
+  let A = load();
+  let shopCat = 'home';
+
+  function load() { const d = BB.Store.get(KEY); return d && d.v === 1 && d.life ? d : null; }
+  function save() { BB.Store.set(KEY, A); }
+  function show(html) {
+    view.innerHTML = `<div data-screen="after">${html}</div>`;
+    G.state.mode = 'menu';
+    G.showView('career');
+    view.scrollTop = 0;
+  }
+  const signed = (v, unit = '') => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v)}${unit}`;
+
+  // ── 공용: 위쪽 상태 ─────────────────────────────────────
+  function status() {
+    const J = A.job;
+    const F = A.life.family;
+    const rep = J ? `<em>평판 ${J.rep}</em>` : '<em>쉬는 중</em>';
+    return `<div class="goals">
+      <div class="goal"><span>${A.age}세 · 은퇴 ${A.year}년째</span><b>${esc(AF.jobTitle(J))}</b>${rep}</div>
+      <div class="goal"><span>순자산</span><b>${C.money(AF.netOf(A))}</b><em>현금 ${C.money(A.money.cash)}</em></div>
+      <div class="goal"><span>건강 · 가족 행복</span><b>${A.health} · ${F.happy}</b><em>인기 ${A.fans}${F.spouse ? ' · 아내' : ''}${F.kids.length ? ` · 아이 ${F.kids.length}` : ''}</em></div>
+    </div>`;
+  }
+  const endBtn = () => '<button class="btn btn--ghost" type="button" data-aft="endAsk">인생 마무리하기</button>';
+
+  // ── 시작 ────────────────────────────────────────────────
+  /** 은퇴식에서 부른다: 은퇴 직전 선수로 은퇴 후 삶을 만들어 둔다 */
+  function prepare(p, rec) {
+    try { A = AF.startAfter(p, rec); A.started = false; save(); } catch (e) { A = null; }
+  }
+  function startButton() {
+    return A && !A.started && !A.done ? `<button class="play play--gold" type="button" data-aft="begin">은퇴 후 삶 이어가기</button>` : '';
+  }
+  /** 이어할 은퇴 후 삶이 있으면 새 선수 화면 위에 띄울 줄 */
+  function resumeLine() {
+    if (!A || A.done) return '';
+    return `<button class="pick" type="button" data-aft="resume"><span class="pick__head"><b>${A.started ? '은퇴 후 삶 이어하기' : '은퇴 후 삶 시작하기'}</b></span><span class="pick__desc">${esc(A.name)} · ${A.age}세 · ${esc(AF.jobTitle(A.job))}</span></button>`;
+  }
+  function begin() {
+    if (!A) return;
+    A.started = true;
+    AF.newYear(A, rng);
+    save();
+    showIntro();
+  }
+  function showIntro() {
+    show(`
+      <p class="card__eyebrow">제2의 인생 · ${A.age}세</p>
+      <h2 class="card__title card__title--sm">${esc(A.name)}의 은퇴 후 삶</h2>
+      <p class="card__lead">현역 때 모은 돈·집·차, 가족이 그대로 이어집니다. 해마다 일의 방향을 정하고, 일어나는 일에 답하고, 연말 결산을 받아요. ${AF.END_AGE}세가 되거나 원할 때 끝나고, 칭호가 명예의 전당 기록에 남습니다.</p>
+      ${status()}
+      <button class="play" type="button" data-aft="go">시작</button>`);
+  }
+
+  // ── 흐름 ────────────────────────────────────────────────
+  function go() {
+    if (!A) return;
+    if (A.done || A.phase === 'end') { showEnd(); return; }
+    if (A.phase === 'job') showJobs();
+    else if (A.phase === 'plan') showPlan();
+    else if (A.phase === 'event') { if (A.event) showEvent(); else { AF.nextEvent(A, rng); save(); go(); } }
+    else if (A.phase === 'review') { if (A.last && A.last.year === A.year) showReview(); else { AF.endYear(A, rng); afterYear(); } }
+  }
+  function afterYear() {
+    if (A.done) { record(); save(); showEnd(); return; }
+    save();
+    showReview();
+  }
+
+  // 직업 고르기
+  function showJobs(msg) {
+    const cards = Object.entries(AF.JOBS).map(([id, J]) => {
+      const why = AF.cantStart(A, id);
+      return `<button class="pick" type="button" data-aft="job" data-id="${id}"${why ? ' disabled' : ''}>
+        <span class="pick__head"><b>${J.icon} ${esc(J.name)}</b>${why ? `<i>${esc(why)}</i>` : ''}</span>
+        <span class="pick__desc">${esc(J.desc)}</span></button>`;
+    }).join('');
+    show(`
+      <p class="card__eyebrow">${A.year}년째 · 새해</p>
+      <h2 class="card__title card__title--sm">${A.jobs.length || A.year > 1 ? '어떤 일을 할까?' : '제2의 직업 고르기'}</h2>
+      ${msg ? `<p class="move">${esc(msg)}</p>` : ''}
+      ${status()}
+      <div class="picks">${cards}
+        <button class="pick" type="button" data-aft="rest"><span class="pick__head"><b>🏖 올해는 쉰다</b></span><span class="pick__desc">건강·가족 행복 +5. 수입 없음</span></button>
+      </div>
+      ${endBtn()}`);
+  }
+
+  // 올해 방향
+  function showPlan(msg) {
+    const dirs = AF.dirsFor(A);
+    const J = A.job;
+    const head = J.id === 'scout' ? '올해 1순위로 추천할 유망주' : J.id === 'biz' && !J.type ? '어떤 가게를 열까?' : '올해의 방향';
+    show(`
+      <p class="card__eyebrow">${A.year}년째 · ${A.age}세 · ${esc(AF.JOBS[J.id].name)}</p>
+      <h2 class="card__title card__title--sm">${head}</h2>
+      ${msg ? `<p class="move">${esc(msg)}</p>` : ''}
+      ${status()}
+      <div class="picks">${dirs.map((d) => `
+        <button class="pick" type="button" data-aft="plan" data-id="${esc(d.id)}"${d.off ? ' disabled' : ''}>
+          <span class="pick__head"><b>${esc(d.label)}</b>${d.off ? `<i>${esc(d.off)}</i>` : ''}</span>
+          <span class="pick__desc">${esc(d.desc)}</span></button>`).join('')}</div>
+      <div class="form form--2">
+        <button class="btn" type="button" data-aft="shop">🏠 자산 관리</button>
+        <button class="btn" type="button" data-aft="quitAsk">직업 바꾸기</button>
+      </div>
+      ${endBtn()}`);
+  }
+
+  // 이벤트
+  function showEvent() {
+    const e = AF.EVENT_BY_ID[A.event];
+    if (!e) { A.event = null; AF.nextEvent(A, rng); save(); go(); return; }
+    show(`
+      <p class="card__eyebrow">${A.year}년째 · ${A.age}세 · 선택의 순간</p>
+      <h2 class="card__title card__title--sm">${esc(e.title)}</h2>
+      <p class="card__lead">${esc(e.text(A))}</p>
+      <div class="picks">${e.choices.map((c, i) => `
+        <button class="pick" type="button" data-aft="pick" data-i="${i}">
+          <span class="pick__head"><b>${esc(c.label)}</b></span>
+          <span class="pick__desc">${esc(c.desc)}</span></button>`).join('')}</div>`);
+  }
+  function pick(i) {
+    const out = AF.chooseEvent(A, i, rng);
+    if (!out) return;
+    const notes = [];
+    if (out.cash) notes.push(`돈 ${out.cash > 0 ? '+' : '−'}${C.money(Math.abs(out.cash))}`);
+    if (out.fans) notes.push(`인기 ${signed(out.fans)}`);
+    if (out.happy) notes.push(`가족 행복 ${signed(out.happy)}`);
+    if (out.health) notes.push(`건강 ${signed(out.health)}`);
+    if (out.rep) notes.push(`평판 ${signed(out.rep)}`);
+    AF.nextEvent(A, rng);
+    save();
+    show(`
+      <p class="card__eyebrow">${esc(out.title)} · ${esc(out.choice)}</p>
+      <h2 class="card__title card__title--sm">${esc(out.text)}</h2>
+      ${notes.length ? `<p class="card__lead">${notes.join(' · ')}</p>` : ''}
+      <button class="play" type="button" data-aft="go">${A.phase === 'event' ? '다음' : '연말 결산 보기'}</button>`);
+  }
+
+  // 연말 결산
+  function showReview() {
+    const r = A.last;
+    if (!r) { go(); return; }
+    const J = r.job;
+    const lifeNotes = (r.life || []).map((n) => `<p class="${n.kind === 'bad' ? 'is-bad' : n.kind === 'good' ? 'is-good' : ''}">${esc(n.text)}</p>`).join('');
+    show(`
+      <p class="card__eyebrow">${r.year}년째 결산 · ${r.age}세</p>
+      <h2 class="card__title card__title--sm">${J.income ? `올해 수입 ${J.income > 0 ? '' : '−'}${C.money(Math.abs(J.income))}` : '올해는 수입이 없었다'}</h2>
+      ${status()}
+      <p class="card__lead">${esc(J.title || '쉬는 중')}${A.planLabel ? ` · 올해 방향: ${esc(A.planLabel)}` : ''}${J.rep ? ` · 평판 ${signed(J.rep)}` : ''}</p>
+      ${J.notes.length || r.notes.length ? `<div class="note">${r.notes.map((t) => `<p>${esc(t)}</p>`).join('')}${J.notes.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}
+      ${r.kids.length ? `<p class="card__eyebrow">가족 소식</p><div class="note">${r.kids.map((t) => `<p>${esc(t)}</p>`).join('')}</div>` : ''}
+      ${lifeNotes ? `<p class="card__eyebrow">자산</p><div class="note">${lifeNotes}</div>` : ''}
+      <button class="play" type="button" data-aft="next">${A.age + 1 >= AF.END_AGE ? '마지막 해로' : '다음 해로'}</button>
+      <button class="btn btn--ghost" type="button" data-aft="log">지난 기록</button>
+      ${endBtn()}`);
+  }
+  function showLog() {
+    const rows = A.log.slice().reverse().map((l) => `<li class="hof__row"><span class="hof__rank">${l.age}</span><span class="hof__main"><b>${esc(l.job)}</b><i>${esc(l.line)}</i></span><span class="hof__grade">${C.money(l.net)}</span></li>`).join('');
+    show(`
+      <p class="card__eyebrow">은퇴 후 ${A.year}년</p>
+      <h2 class="card__title card__title--sm">지난 기록</h2>
+      <ol class="hof">${rows}</ol>
+      <button class="play" type="button" data-aft="go">돌아가기</button>`);
+  }
+
+  // 자산 관리(현역 때와 같은 물건·규칙)
+  function showShop(msg) {
+    const L = C.ensureLife(A);
+    const own = L.assets.map((a, i) => { const it = C.LIFE_ITEM[a.id]; return `<li class="hof__row"><span class="hof__main"><b>${esc(it.name)}</b><i>시세 ${C.money(a.value)} · 산 값 ${C.money(a.paid)}</i></span><button class="btn btn--ghost" type="button" data-aft="sell" data-i="${i}">팔기</button></li>`; }).join('');
+    const cats = Object.entries(C.LIFE_CATS).map(([k, n]) => `<button class="btn${shopCat === k ? '' : ' btn--ghost'}" type="button" data-aft="cat" data-id="${k}">${esc(n)}</button>`).join('');
+    const items = C.LIFE_ITEMS.filter((it) => it.cat === shopCat).map((it) => {
+      const why = C.cantBuyLife(A, it.id);
+      return `<button class="pick" type="button" data-aft="buy" data-id="${it.id}"${why ? ' disabled' : ''}><span class="pick__head"><b>${esc(it.name)}</b><i>${C.money(it.price)}${why ? ` · ${esc(why)}` : ''}</i></span><span class="pick__desc">${esc(it.desc)}</span></button>`;
+    }).join('');
+    show(`
+      <p class="card__eyebrow">자산 관리 · 현금 ${C.money(A.money.cash)}</p>
+      <h2 class="card__title card__title--sm">집 · 차 · 사치품 · 가족</h2>
+      ${msg ? `<p class="move">${esc(msg)}</p>` : ''}
+      ${own ? `<ol class="hof">${own}</ol>` : '<p class="card__lead">가진 자산이 없어요.</p>'}
+      <div class="form form--2">${cats}</div>
+      <div class="picks">${items}</div>
+      <button class="play" type="button" data-aft="go">돌아가기</button>`);
+  }
+
+  // 마무리
+  function showEndAsk() {
+    show(`
+      <p class="card__eyebrow">${A.age}세</p>
+      <h2 class="card__title card__title--sm">여기서 인생을 마무리할까요?</h2>
+      <p class="card__lead">지금까지의 삶으로 칭호와 에필로그가 정해지고, 명예의 전당 기록에 남습니다. 되돌릴 수 없어요.</p>
+      <button class="btn btn--danger" type="button" data-aft="endYes">마무리한다</button>
+      <button class="play" type="button" data-aft="go">계속 산다</button>`);
+  }
+  function record() {
+    if (A.recorded) return;
+    BB.Store.set('legacy', AF.recordAfter(BB.Store.get('legacy'), A));
+    A.recorded = true;
+  }
+  function showEnd() {
+    const E = A.ending || AF.endNow(A);
+    record();
+    save();
+    if (BB.careerUI && BB.careerUI.refreshEntry) BB.careerUI.refreshEntry();
+    show(`
+      <p class="card__eyebrow">${esc(A.name)} · ${E.age}세 · ${E.early ? '인생 마무리' : '긴 여정의 끝'}</p>
+      <h2 class="card__title card__title--sm">${esc(E.title)}</h2>
+      <p class="grade"><b>${esc(A.grade)}</b><span>현역 · 점수 ${A.score}</span></p>
+      <div class="goals">
+        <div class="goal"><span>순자산</span><b>${C.money(E.net)}</b><em>${esc(C.tierOf(E.net))}</em></div>
+        <div class="goal"><span>제2의 인생</span><b>${E.jobs.length ? esc(E.jobs.join(' · ')) : '쉬며 지냈다'}</b><em>${[E.champs ? `우승 ${E.champs}회` : '', E.pupils ? `제자 ${E.pupils}명` : '', E.stars ? `발굴 스타 ${E.stars}명` : ''].filter(Boolean).join(' · ') || `${A.age - A.retiredAge}년`}</em></div>
+        <div class="goal"><span>가족</span><b>${A.life.family.spouse ? '아내' : '혼자'}${A.life.family.kids.length ? ` · 아이 ${A.life.family.kids.length}명` : ''}${A.stats.grandkids ? ` · 손주 ${A.stats.grandkids}명` : ''}</b><em>가족 행복 ${A.life.family.happy}</em></div>
+      </div>
+      <div class="note">${E.lines.map((t) => `<p>${esc(t)}</p>`).join('')}</div>
+      ${A.heir ? `<p class="move">${esc(A.heir.child)}가 프로 선수가 됐다. 다음 선수로 <b>야구인 2세</b>를 고를 수 있다.</p>` : ''}
+      <button class="play" type="button" data-act="newPlayer">새 선수로 시작</button>
+      <button class="btn btn--ghost" type="button" data-act="hof">명예의 전당 보기</button>`);
+  }
+
+  // ── 버튼 ────────────────────────────────────────────────
+  view.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-aft]');
+    if (!b || b.disabled) return;
+    e.stopPropagation();
+    if (!A) A = load();
+    if (!A) return;
+    BB.Sfx.click();
+    const act = b.dataset.aft;
+    const id = b.dataset.id;
+    if (act === 'begin') begin();
+    else if (act === 'resume') { if (!A.started) begin(); else go(); }
+    else if (act === 'go') go();
+    else if (act === 'job') { const why = AF.startJob(A, id, rng); if (why) { showJobs(why); return; } A.phase = 'plan'; save(); showPlan(); }
+    else if (act === 'rest') { A.planLabel = '쉬는 해'; AF.setPlan(A, 'rest', rng); save(); go(); }
+    else if (act === 'plan') { const d = AF.dirsFor(A).find((x) => x.id === id); A.planLabel = d ? d.label : ''; const why = AF.setPlan(A, id, rng); save(); if (why) showPlan(why); else go(); }
+    else if (act === 'pick') pick(+b.dataset.i);
+    else if (act === 'next') { AF.newYear(A, rng); save(); go(); }
+    else if (act === 'log') showLog();
+    else if (act === 'shop') showShop();
+    else if (act === 'cat') { shopCat = id; showShop(); }
+    else if (act === 'buy') { const t = C.buyLife(A, id); save(); showShop(t); }
+    else if (act === 'sell') { const t = C.sellLife(A, +b.dataset.i); save(); showShop(t); }
+    else if (act === 'quitAsk') {
+      show(`
+        <p class="card__eyebrow">${esc(AF.jobTitle(A.job))}</p>
+        <h2 class="card__title card__title--sm">지금 일을 그만두고 다른 일을 할까요?</h2>
+        <p class="card__lead">새 일은 처음 단계부터 시작합니다.${A.job.id === 'biz' && A.job.type ? ' 가게는 지금 가치의 일부만 받고 정리돼요.' : ''}</p>
+        <button class="btn btn--danger" type="button" data-aft="quit">그만둔다</button>
+        <button class="play" type="button" data-aft="go">계속한다</button>`);
+    }
+    else if (act === 'quit') {
+      if (A.job && A.job.id === 'biz' && A.job.type) { const v = Math.round(A.job.cap * 0.5 / 100) * 100; A.money.cash += v; }
+      A.jobs.push({ id: A.job.id, level: A.job.level, years: A.job.years, type: A.job.type });
+      A.job = null; A.phase = 'job'; save(); showJobs();
+    }
+    else if (act === 'endAsk') showEndAsk();
+    else if (act === 'endYes') { AF.endNow(A); record(); save(); showEnd(); }
+  });
+
+  BB.afterUI = { prepare, startButton, resumeLine, get state() { return A; }, reload() { A = load(); } };
 })(typeof window !== 'undefined' ? window : globalThis);
 </script>
 <script>
