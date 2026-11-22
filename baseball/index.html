@@ -12192,6 +12192,9 @@ body {
         if (!V) return;
         if (phase === 'ready' || phase === 'idle') syncView(now);
         const g = VG();
+        // 공을 기다리는 동안 경기장 주자·아웃을 점수판과 맞춘다(전엔 다음 공을 던질 때에야 바뀌어서
+        // 이닝이 바뀌거나 견제사·도루·안타 뒤에 없는 주자가 서 있거나, 있는 주자가 안 보였다)
+        if (g && (phase === 'ready' || phase === 'idle')) { ses.bases = g.bases; ses.outs = Math.min(2, g.outs); }
         renderSb();
         // 공수에 따라 유니폼: 내가 치면 나는 타자, 상대가 투수·야수
         const me = myKey();
